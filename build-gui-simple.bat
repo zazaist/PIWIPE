@@ -10,10 +10,10 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo Compiling...
-cl /EHsc /W4 /std:c++17 /utf-8 /I. src\main_gui.cpp /Fe:piwiper-gui-test.exe user32.lib comctl32.lib gdi32.lib advapi32.lib shell32.lib /link /SUBSYSTEM:WINDOWS
+cl /EHsc /W4 /std:c++17 /utf-8 /I. src\main_gui.cpp /Fe:piwiper-gui.exe user32.lib comctl32.lib gdi32.lib advapi32.lib shell32.lib /link /SUBSYSTEM:WINDOWS
 
 if %ERRORLEVEL% equ 0 (
-    echo Build successful! Executable: piwiper-gui-test.exe
+    echo Build successful! Executable: piwiper-gui.exe
     echo.
     echo NOTE: Run as Administrator!
 ) else (

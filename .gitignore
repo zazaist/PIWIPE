@@ -6,6 +6,10 @@
 *.exp
 *.lib
 
+# Specific test/development executables to ignore
+piwiper-gui-test.exe
+piwiper-gui-new.exe
+
 # Build directories
 build/
 Debug/
