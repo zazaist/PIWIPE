@@ -1,5 +1,9 @@
 #include <windows.h>
 #include "version.h"
+#include "piwiper_resource.h"
+
+// Icon Resource
+IDI_MAINICON ICON "piwiper_new.ico"
 
 // Version Information Resource
 VS_VERSION_INFO VERSIONINFO

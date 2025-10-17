@@ -11,7 +11,7 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo Compiling GUI version...
-cl /EHsc /W4 /std:c++17 /I. src\main_gui.cpp src\version.rc /Fe:piwiper-gui.exe user32.lib comctl32.lib gdi32.lib msimg32.lib advapi32.lib shell32.lib /link /SUBSYSTEM:WINDOWS
+cl /EHsc /W4 /std:c++17 /I. src\main_gui.cpp src\version.rc src\piwiper.rc /Fe:piwiper-gui.exe user32.lib comctl32.lib gdi32.lib msimg32.lib advapi32.lib shell32.lib /link /SUBSYSTEM:WINDOWS
 
 if %ERRORLEVEL% equ 0 (
     echo Embedding Administrator manifest...

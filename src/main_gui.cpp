@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <set>
 #include "version.h"
+#include "piwiper_resource.h"
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "user32.lib")
@@ -1503,7 +1504,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     wc.lpszClassName = "DiskWiperGUI";
     wc.hbrBackground = CreateSolidBrush(RGB(240, 242, 245)); // Modern light gray background
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+    wc.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_MAINICON));
+    wc.hIconSm = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_MAINICON));
     
     if (!RegisterClassExA(&wc)) {
         MessageBoxA(nullptr, "Window registration failed!", "Error", MB_OK | MB_ICONERROR);
