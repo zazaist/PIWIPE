@@ -41,6 +41,11 @@ Thumbs.db
 WipeLogs/*.txt
 
 # Backup files
+backups/
+*.backup
+backup.log
+
+# Backup files
 *.bak
 *.backup
 
