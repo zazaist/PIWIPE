@@ -152,7 +152,16 @@ piwiper/
 
 ## 📝 Sürüm Geçmişi
 
-### v2.0 (Current)
+### v2.1.0 (Current)
+- ✅ **Comprehensive versioning system** - Full version management
+- ✅ **About dialog** - Version information and features
+- ✅ **Version resources** - Windows file properties
+- ✅ **Version manager tool** - Automated version management
+- ✅ **Release notes generator** - Automated documentation
+- ✅ **Git tag integration** - Proper release management
+- ✅ **Build system enhancement** - Version-aware compilation
+
+### v2.0.0
 - ✅ Modern UI/UX tasarımı
 - ✅ Dual progress bars
 - ✅ Real-time speed display
@@ -161,7 +170,7 @@ piwiper/
 - ✅ Code cleanup (200+ lines removed)
 - ✅ Memory optimization
 
-### v1.0
+### v1.0.0
 - ✅ Basic GUI interface
 - ✅ Disk listing
 - ✅ Quick/Secure wipe modes

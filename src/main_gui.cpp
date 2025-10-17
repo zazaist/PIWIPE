@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <cstdio>
 #include <set>
+#include "version.h"
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "user32.lib")
@@ -92,6 +93,7 @@ int g_verificationMode = 0; // 0=None, 1=Quick, 2=Full
 #define ID_CUSTOMER_ADDRESS_INPUT 1022
 #define ID_CUSTOMER_PHONE_INPUT 1023
 #define ID_CUSTOMER_EMAIL_INPUT 1024
+#define ID_ABOUT_DIALOG 1027
 
 // Helper: run command and capture output
 static std::string runCmd(const std::string& cmd) {
@@ -822,6 +824,28 @@ void RefreshDiskList() {
     LogMessage("Found " + std::to_string((int)g_disks.size()) + " total disk(s), " + std::to_string(nonOSCount) + " available for wipe");
 }
 
+// Show About Dialog
+void ShowAboutDialog() {
+    std::string aboutText = "PIWIPER - Professional Disk Eraser\n\n";
+    aboutText += "Version: " + std::string(PIWIPER_VERSION_STRING) + "\n";
+    aboutText += "Build Date: " + std::string(PIWIPER_BUILD_DATE) + " " + std::string(PIWIPER_BUILD_TIME) + "\n";
+    aboutText += "Build Config: " + std::string(PIWIPER_BUILD_CONFIG) + "\n\n";
+    aboutText += PIWIPER_APP_DESCRIPTION + "\n\n";
+    aboutText += "Features:\n";
+    aboutText += "• Modern UI with gradient design\n";
+    aboutText += "• Dual progress tracking\n";
+    aboutText += "• Real-time speed display\n";
+    aboutText += "• Verification system\n";
+    aboutText += "• Comprehensive backup system\n";
+    aboutText += "• OS disk protection\n\n";
+    aboutText += PIWIPER_APP_COPYRIGHT + "\n";
+    aboutText += "All rights reserved.\n\n";
+    aboutText += "⚠️ WARNING: This tool permanently destroys data!\n";
+    aboutText += "Use with extreme caution and proper authorization.";
+    
+    MessageBoxA(g_hWnd, aboutText.c_str(), "About PIWIPER", MB_OK | MB_ICONINFORMATION);
+}
+
 // Wipe selected disk
 void WipeSelectedDisk() {
     if (g_isWiping) {
@@ -1080,6 +1104,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             CreateWindowA("BUTTON", "Exit", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW | BS_NOTIFY,
                 750, 485, 130, 35, hwnd, (HMENU)ID_BTN_EXIT, g_hInstance, nullptr);
             
+            CreateWindowA("BUTTON", "About", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW | BS_NOTIFY,
+                890, 485, 130, 35, hwnd, (HMENU)ID_ABOUT_DIALOG, g_hInstance, nullptr);
+            
             // Status log at bottom (multiline, read-only, auto-scroll)
             g_hStatusText = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", 
                 WS_VISIBLE | WS_CHILD | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
@@ -1216,6 +1243,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 }
             } else if (id == ID_BTN_EXIT) {
                 PostMessage(hwnd, WM_CLOSE, 0, 0);
+            } else if (id == ID_ABOUT_DIALOG) {
+                ShowAboutDialog();
             } else if (id == ID_METHOD_COMBO && notifyCode == CBN_SELCHANGE) {
                 int sel = SendMessage(g_hMethodCombo, CB_GETCURSEL, 0, 0);
                 if (sel == 0) {
@@ -1374,6 +1403,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     baseColor = RGB(100, 100, 100);  // Gray
                     textColor = RGB(255, 255, 255);
                     btnText = "Refresh";
+                } else if (dis->hwndItem == GetDlgItem(g_hWnd, ID_ABOUT_DIALOG)) {
+                    baseColor = RGB(100, 100, 100);  // Gray for About
+                    textColor = RGB(255, 255, 255);
+                    btnText = "About";
                 } else {
                     baseColor = RGB(80, 80, 80);   // Dark gray for Exit
                     textColor = RGB(255, 255, 255);
@@ -1485,8 +1518,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     int posX = (screenWidth - windowWidth) / 2;
     int posY = (screenHeight - windowHeight) / 2;
     
-    // Create window centered on screen
-    g_hWnd = CreateWindowExA(0, "DiskWiperGUI", "PIWIPER - Professional Disk Eraser",
+    // Create window centered on screen with version info
+    std::string windowTitle = std::string(PIWIPER_APP_NAME) + " v" + PIWIPER_VERSION_SHORT + " - " + PIWIPER_APP_DESCRIPTION;
+    g_hWnd = CreateWindowExA(0, "DiskWiperGUI", windowTitle.c_str(),
         WS_OVERLAPPEDWINDOW | WS_VISIBLE,
         posX, posY, windowWidth, windowHeight,
         nullptr, nullptr, hInstance, nullptr);

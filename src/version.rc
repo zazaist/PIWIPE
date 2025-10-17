@@ -1,0 +1,33 @@
+#include <windows.h>
+#include "version.h"
+
+// Version Information Resource
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     PIWIPER_FILE_VERSION
+PRODUCTVERSION  PIWIPER_PRODUCT_VERSION
+FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+FILEFLAGS       0x0L
+FILEOS          VOS__WINDOWS32
+FILETYPE        VFT_APP
+FILESUBTYPE     VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      PIWIPER_APP_AUTHOR
+            VALUE "FileDescription",  PIWIPER_APP_DESCRIPTION
+            VALUE "FileVersion",      PIWIPER_VERSION_STRING
+            VALUE "InternalName",     PIWIPER_APP_NAME
+            VALUE "LegalCopyright",   PIWIPER_APP_COPYRIGHT
+            VALUE "OriginalFilename", "piwiper-gui.exe"
+            VALUE "ProductName",      PIWIPER_APP_NAME
+            VALUE "ProductVersion",   PIWIPER_VERSION_STRING
+            VALUE "Comments",         "Professional Disk Eraser - Use with extreme caution!"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
