@@ -4,8 +4,8 @@
 // ===========================
 
 #define PIWIPER_VERSION_MAJOR       2
-#define PIWIPER_VERSION_MINOR       1
-#define PIWIPER_VERSION_PATCH       1
+#define PIWIPER_VERSION_MINOR       2
+#define PIWIPER_VERSION_PATCH       0
 #define PIWIPER_VERSION_BUILD       0
 
 // Version string macros
@@ -49,6 +49,10 @@
 #define PIWIPER_HAS_DUAL_PROGRESS   PIWIPER_VERSION_CHECK(2, 0, 0)
 #define PIWIPER_HAS_VERIFICATION    PIWIPER_VERSION_CHECK(2, 0, 0)
 #define PIWIPER_HAS_BACKUP_SYSTEM   PIWIPER_VERSION_CHECK(2, 1, 0)
+
+// Wipe counter system - compile-time limit
+// This value is embedded in the executable and cannot be changed externally
+#define WIPE_COUNTER_LIMIT          3  // Maximum number of wipe operations allowed
 
 
 

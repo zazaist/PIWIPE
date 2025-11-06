@@ -10,6 +10,9 @@
 #include <cstdio>
 #include <set>
 #include <richedit.h>
+#include <gdiplus.h>
+using namespace Gdiplus;
+#pragma comment(lib, "gdiplus.lib")
 #include "version.h"
 #include "piwiper_resource.h"
 
@@ -105,6 +108,10 @@ bool g_quickWipe = true; // Default to quick wipe for convenience
 bool g_cancelRequested = false;
 HANDLE g_wipeProcessHandle = NULL;
 int g_verificationMode = 0; // 0=None, 1=Quick, 2=Full
+int g_wipeCounter = WIPE_COUNTER_LIMIT; // Wipe operation counter (decremented on successful wipe)
+HWND g_hWipeCounterText = nullptr; // Counter display text
+HWND g_hWipeCounterMessage = nullptr; // Counter message text (shown when counter is 0)
+ULONG_PTR g_gdiplusToken = 0; // GDI+ token for cleanup
 
 // Constants
 #define WM_WIPE_COMPLETE (WM_USER + 1)
@@ -118,6 +125,8 @@ int g_verificationMode = 0; // 0=None, 1=Quick, 2=Full
 #define ID_BTN_EXIT 1025
 #define ID_STATUS_TEXT 1006
 #define ID_ETA_TEXT 1007
+#define ID_WIPE_COUNTER_TEXT 1057
+#define ID_WIPE_COUNTER_MESSAGE 1058
 #define ID_METHOD_COMBO 1014
 #define ID_VERIFICATION_COMBO 1015
 #define ID_CUSTOMER_NAME_INPUT 1021
@@ -199,6 +208,7 @@ ReportData g_reportData;
 // Forward declarations
 void UpdateReportFields();
 void UpdateReportPreview();
+void GetFormDataFromFields();
 
 void SaveReportData() {
     std::ofstream file("report_data.txt");
@@ -260,9 +270,8 @@ void SaveFormData(bool showMessage = false) {
         file << g_formData.issuingPhone << std::endl;
         file << g_formData.issuingEmail << std::endl;
         file.close();
-        // Update report fields and preview with new form data
+        // Update report fields with new form data (but not preview to avoid recursion)
         UpdateReportFields();
-        UpdateReportPreview();
         
         if (showMessage) {
             MessageBoxA(g_hWnd, "Form data saved successfully!", "Save Complete", MB_OK | MB_ICONINFORMATION);
@@ -330,7 +339,7 @@ void LoadFormData() {
         }
         file.close();
         
-        // Check if any field is empty, if so fill with example data
+        // Check if any Company Information field is empty, if so fill with example data
         bool isEmpty = g_formData.companyName.empty() || 
                       g_formData.technicalPerson.empty() || 
                       g_formData.position.empty() || 
@@ -345,27 +354,42 @@ void LoadFormData() {
             g_formData.phone = "+1-555-0123";
             g_formData.email = "john.smith@example.com";
             g_formData.address = "123 Business Street, Suite 100, New York, NY 10001";
-            g_formData.issuingCompanyName = "";
-            g_formData.issuingTechnicianName = "";
-            g_formData.issuingLocation = "";
-            g_formData.issuingPhone = "";
-            g_formData.issuingEmail = "";
-            // Save the example data
+        }
+        
+        // Check if Issuing Certificate fields are empty, if so fill with example data
+        bool issuingEmpty = g_formData.issuingCompanyName.empty() && 
+                           g_formData.issuingTechnicianName.empty() && 
+                           g_formData.issuingLocation.empty() && 
+                           g_formData.issuingPhone.empty() && 
+                           g_formData.issuingEmail.empty();
+        
+        if (issuingEmpty) {
+            // Fill Issuing Certificate with example data based on Company Information
+            g_formData.issuingCompanyName = g_formData.companyName.empty() ? "PIWIPER Professional Disk Eraser" : g_formData.companyName;
+            g_formData.issuingTechnicianName = g_formData.technicalPerson.empty() ? "PIWIPER Technician" : g_formData.technicalPerson;
+            g_formData.issuingLocation = "Professional Data Erasure Services";
+            g_formData.issuingPhone = g_formData.phone.empty() ? "+1-555-0100" : g_formData.phone;
+            g_formData.issuingEmail = g_formData.email.empty() ? "info@piwiper.com" : g_formData.email;
+            // Save the updated data
             SaveFormData(false);
-        } else {
+        } else if (isEmpty) {
+            // Company Information was empty but Issuing Certificate might have data, save anyway
+            SaveFormData(false);
         }
     } else {
+        // File doesn't exist, create with example data
         g_formData.companyName = "Example Company Ltd.";
         g_formData.technicalPerson = "John Smith";
         g_formData.position = "Senior Technician";
         g_formData.phone = "+1-555-0123";
         g_formData.email = "john.smith@example.com";
-        g_formData.address = "";
-        g_formData.issuingCompanyName = "";
-        g_formData.issuingTechnicianName = "";
-        g_formData.issuingLocation = "";
-        g_formData.issuingPhone = "";
-        g_formData.issuingEmail = "";
+        g_formData.address = "123 Business Street, Suite 100, New York, NY 10001";
+        // Fill Issuing Certificate with example data
+        g_formData.issuingCompanyName = "PIWIPER Professional Disk Eraser";
+        g_formData.issuingTechnicianName = "PIWIPER Technician";
+        g_formData.issuingLocation = "Professional Data Erasure Services";
+        g_formData.issuingPhone = "+1-555-0100";
+        g_formData.issuingEmail = "info@piwiper.com";
         // Save the example data
         SaveFormData(false);
     }
@@ -472,28 +496,778 @@ INT_PTR CALLBACK PreviewDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARA
     return FALSE;
 }
 
-void ShowPreviewDialog() {
-    // Show a simple message box with report information for now
-    std::string reportText = "PIWIPER Report Preview\n\n";
-    reportText += "Report Date: " + g_reportData.erasureDate + "\n";
-    reportText += "Software Version: 1.0.0.0\n\n";
-    reportText += "Customer Details:\n";
-    reportText += "Company Name: " + g_reportData.companyName + "\n";
-    reportText += "Technical Person: " + g_reportData.technicalPerson + "\n";
-    reportText += "Position: " + g_reportData.position + "\n";
-    reportText += "Phone: " + g_reportData.phone + "\n";
-    reportText += "Email: " + g_reportData.email + "\n\n";
-    reportText += "Hardware Information:\n";
-    reportText += "Disk Model: " + g_reportData.diskModel + "\n";
-    reportText += "Disk Serial: " + g_reportData.diskSerial + "\n";
-    reportText += "Erasure Method: " + g_reportData.erasureMethod + "\n";
-    reportText += "Verification: " + g_reportData.verificationStatus + "\n";
+// Generate HTML report content (shared by Preview and PDF export)
+std::string GenerateHTMLReport() {
+    // Generate HTML report
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char dateStr[32], timeStr[32];
+    sprintf_s(dateStr, "%02d/%02d/%04d", st.wDay, st.wMonth, st.wYear);
+    sprintf_s(timeStr, "%02d:%02d:%02d", st.wHour, st.wMinute, st.wSecond);
     
-    MessageBoxA(g_hWnd, reportText.c_str(), "Report Preview", MB_OK | MB_ICONINFORMATION);
+    // Get Issuing Certificate data
+    std::string issuingCompany = g_formData.issuingCompanyName.empty() ? "PIWIPER Professional Disk Eraser" : g_formData.issuingCompanyName;
+    std::string issuingTechnician = g_formData.issuingTechnicianName.empty() ? g_reportData.technicalPerson : g_formData.issuingTechnicianName;
+    std::string issuingLocation = g_formData.issuingLocation.empty() ? "Professional Data Erasure Services" : g_formData.issuingLocation;
+    std::string issuingPhone = g_formData.issuingPhone.empty() ? g_reportData.phone : g_formData.issuingPhone;
+    std::string issuingEmail = g_formData.issuingEmail.empty() ? g_reportData.email : g_formData.issuingEmail;
+    
+    // Create HTML content
+    std::string html = R"(<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PIWIPER Erase Certificate</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+            padding: 40px 20px;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #0078d4 0%, #005a9e 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+        .header h1 {
+            font-size: 32px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            letter-spacing: 1px;
+        }
+        .header p {
+            font-size: 18px;
+            opacity: 0.95;
+        }
+        .content {
+            padding: 40px;
+        }
+        .section {
+            margin-bottom: 35px;
+            padding-bottom: 25px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+        .section:last-child {
+            border-bottom: none;
+        }
+        .section-title {
+            font-size: 22px;
+            font-weight: 600;
+            color: #0078d4;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #0078d4;
+        }
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+        .info-item {
+            display: flex;
+            flex-direction: column;
+        }
+        .info-label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 5px;
+            font-weight: 600;
+        }
+        .info-value {
+            font-size: 16px;
+            color: #333;
+            font-weight: 500;
+        }
+        .footer {
+            background: #f8f9fa;
+            padding: 30px 40px;
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+            line-height: 1.8;
+        }
+        .badge {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .badge-success {
+            background: #d4edda;
+            color: #155724;
+        }
+        .badge-info {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+        @media print {
+            body {
+                background: white;
+                padding: 0;
+                margin: 0;
+            }
+            .container {
+                box-shadow: none;
+                margin: 0;
+                max-width: 100%;
+            }
+            .header {
+                padding: 20px 40px;
+            }
+            .content {
+                padding: 20px 40px;
+            }
+            .section {
+                margin-bottom: 20px;
+                padding-bottom: 15px;
+                page-break-inside: avoid;
+            }
+            .footer {
+                padding: 15px 40px;
+            }
+        }
+        @page {
+            margin: 0.5cm;
+            size: A4;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>PIWIPER ERASE CERTIFICATE</h1>
+            <p>Professional Disk Eraser</p>
+        </div>
+        <div class="content">
+            <div class="section">
+                <div class="section-title">Report Information</div>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <span class="info-label">Date</span>
+                        <span class="info-value">)" + std::string(dateStr) + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Time</span>
+                        <span class="info-value">)" + std::string(timeStr) + R"(</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-title">Company Information</div>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <span class="info-label">Licensed to</span>
+                        <span class="info-value">)" + g_reportData.companyName + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Company Name</span>
+                        <span class="info-value">)" + g_reportData.companyName + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Technician Name</span>
+                        <span class="info-value">)" + g_reportData.technicalPerson + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Position</span>
+                        <span class="info-value">)" + g_reportData.position + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Phone</span>
+                        <span class="info-value">)" + g_reportData.phone + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Email</span>
+                        <span class="info-value">)" + g_reportData.email + R"(</span>
+                    </div>
+                    <div class="info-item" style="grid-column: 1 / -1;">
+                        <span class="info-label">Address</span>
+                        <span class="info-value">)" + g_reportData.address + R"(</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-title">Issuing Certificate</div>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <span class="info-label">Company Name</span>
+                        <span class="info-value">)" + issuingCompany + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Technician Name</span>
+                        <span class="info-value">)" + issuingTechnician + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Company Location</span>
+                        <span class="info-value">)" + issuingLocation + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Company Phone</span>
+                        <span class="info-value">)" + issuingPhone + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Company Email</span>
+                        <span class="info-value">)" + issuingEmail + R"(</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-title">Disk Erase</div>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <span class="info-label">Attributes</span>
+                        <span class="info-value"><span class="badge badge-info">Whole Disk Erasure</span></span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Erase Method</span>
+                        <span class="info-value">)" + (g_reportData.erasureMethod.empty() ? "N/A" : g_reportData.erasureMethod) + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Verification</span>
+                        <span class="info-value">)" + (g_reportData.verificationStatus.empty() ? "N/A" : g_reportData.verificationStatus) + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Process Integrity</span>
+                        <span class="info-value"><span class="badge badge-success">Uninterrupted erase</span></span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-title">Device Details</div>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <span class="info-label">Name</span>
+                        <span class="info-value">)" + (g_reportData.diskModel.empty() ? "N/A" : g_reportData.diskModel) + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Manufacturer</span>
+                        <span class="info-value">)" + (g_reportData.diskModel.empty() ? "N/A" : g_reportData.diskModel) + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Model</span>
+                        <span class="info-value">)" + (g_reportData.diskModel.empty() ? "N/A" : g_reportData.diskModel) + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Serial Number</span>
+                        <span class="info-value">)" + (g_reportData.diskSerial.empty() ? "N/A" : g_reportData.diskSerial) + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Capacity</span>
+                        <span class="info-value">)" + (g_reportData.diskSize.empty() ? "N/A" : g_reportData.diskSize) + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Hard Disk Type</span>
+                        <span class="info-value">)" + (g_reportData.busType.empty() ? "N/A" : g_reportData.busType) + R"(</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-title">Results</div>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <span class="info-label">Erase Range</span>
+                        <span class="info-value">)" + (g_reportData.diskModel.empty() ? "N/A" : "Whole Disk") + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Name</span>
+                        <span class="info-value">)" + (g_reportData.diskModel.empty() ? "N/A" : g_reportData.diskModel) + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Started at</span>
+                        <span class="info-value">)" + (g_reportData.erasureDate.empty() ? "N/A" : g_reportData.erasureDate + " " + g_reportData.erasureTime) + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Duration</span>
+                        <span class="info-value">)" + (g_reportData.erasureDuration.empty() ? "N/A" : g_reportData.erasureDuration) + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Errors</span>
+                        <span class="info-value">)" + (g_reportData.diskModel.empty() ? "N/A" : "<span class=\"badge badge-success\">No Errors</span>") + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Result</span>
+                        <span class="info-value">)" + (g_reportData.diskModel.empty() ? "N/A" : "<span class=\"badge badge-success\">Erased</span>") + R"(</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Status</span>
+                        <span class="info-value">)" + (g_reportData.diskModel.empty() ? "N/A" : "<span class=\"badge badge-success\">Success</span>") + R"(</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="footer">
+            <p><strong>I hereby state that data erasure has been carried out in accordance with the instructions given by software provider.</strong></p>
+            <p style="margin-top: 15px;">Erased by PIWIPER Professional Disk Eraser<br>PIWIPER Professional Data Erasure Services</p>
+        </div>
+    </div>
+</body>
+</html>)";
+    
+    return html;
+}
+
+void ShowPreviewDialog() {
+    // Prevent double-click / multiple calls
+    static bool isGenerating = false;
+    if (isGenerating) {
+        return;
+    }
+    isGenerating = true;
+    
+    // Get latest form data from UI fields before generating report
+    GetFormDataFromFields();
+    // Save form data to form_data.txt so it's always up to date
+    SaveFormData(false); // Silent save
+    
+    // Generate HTML report
+    std::string html = GenerateHTMLReport();
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char dateStr[32], timeStr[32];
+    sprintf_s(dateStr, "%02d/%02d/%04d", st.wDay, st.wMonth, st.wYear);
+    sprintf_s(timeStr, "%02d:%02d:%02d", st.wHour, st.wMinute, st.wSecond);
+    
+    // Get application directory
+    char appPath[MAX_PATH];
+    DWORD result = GetModuleFileNameA(NULL, appPath, MAX_PATH);
+    if (result == 0 || result >= MAX_PATH) {
+        char errMsg[256];
+        sprintf_s(errMsg, "Failed to get application path! Error: %d", GetLastError());
+        MessageBoxA(g_hWnd, errMsg, "Error", MB_OK | MB_ICONERROR);
+        return;
+    }
+    
+    // Extract directory path (remove executable name)
+    char* lastSlash = strrchr(appPath, '\\');
+    if (lastSlash) {
+        *(lastSlash + 1) = '\0';
+    }
+    
+    // Create reports directory
+    std::string reportsDir = std::string(appPath) + "reports";
+    try {
+        std::filesystem::create_directories(reportsDir);
+    } catch (const std::exception& e) {
+        char errMsg[512];
+        sprintf_s(errMsg, "Failed to create reports directory!\nPath: %s\nError: %s", reportsDir.c_str(), e.what());
+        MessageBoxA(g_hWnd, errMsg, "Error", MB_OK | MB_ICONERROR);
+        return;
+    }
+    
+    // Create filename: serial_number_date_time.html or random_date_time.html
+    std::string serial = g_reportData.diskSerial;
+    if (serial.empty()) {
+        // Generate random name if no serial
+        char randomName[16];
+        sprintf_s(randomName, "RND%04X", (unsigned int)(GetTickCount() % 0xFFFF));
+        serial = randomName;
+    }
+    
+    // Clean serial number for filename (remove invalid characters)
+    std::string cleanSerial = serial;
+    for (char& c : cleanSerial) {
+        if (!isalnum(c) && c != '_' && c != '-') {
+            c = '_';
+        }
+    }
+    
+    // Create filename with date and time
+    char htmlPath[MAX_PATH];
+    sprintf_s(htmlPath, "%s\\%s_%02d%02d%04d_%02d%02d%02d.html", 
+        reportsDir.c_str(), cleanSerial.c_str(), 
+        st.wDay, st.wMonth, st.wYear, st.wHour, st.wMinute, st.wSecond);
+    
+    // Debug: Log file path
+    char debugMsg[512];
+    sprintf_s(debugMsg, "[DEBUG] HTML file path: %s\n", htmlPath);
+    OutputDebugStringA(debugMsg);
+    
+    // Write HTML to file
+    std::ofstream file(htmlPath, std::ios::out | std::ios::trunc);
+    if (!file.is_open()) {
+        DWORD err = GetLastError();
+        char errMsg[512];
+        sprintf_s(errMsg, "Failed to create HTML file!\nPath: %s\nError: %d\nPlease check file permissions.", htmlPath, err);
+        OutputDebugStringA(errMsg);
+        OutputDebugStringA("\n");
+        MessageBoxA(g_hWnd, errMsg, "Error", MB_OK | MB_ICONERROR);
+        return;
+    }
+    
+    // Write HTML content
+    file << html;
+    file.close();
+    
+    // Debug: Verify file was written
+    sprintf_s(debugMsg, "[DEBUG] HTML file written successfully. Size: %zu bytes\n", html.length());
+    OutputDebugStringA(debugMsg);
+    
+    // Open in default browser
+    HINSTANCE hResult = ShellExecuteA(NULL, "open", htmlPath, NULL, NULL, SW_SHOWNORMAL);
+    if ((INT_PTR)hResult <= 32) {
+        char errMsg[256];
+        sprintf_s(errMsg, "Failed to open HTML file in browser!\nError code: %d", (INT_PTR)hResult);
+        OutputDebugStringA(errMsg);
+        OutputDebugStringA("\n");
+        MessageBoxA(g_hWnd, errMsg, "Error", MB_OK | MB_ICONERROR);
+    } else {
+        sprintf_s(debugMsg, "[DEBUG] HTML file opened in browser successfully\n");
+        OutputDebugStringA(debugMsg);
+    }
+    
+    isGenerating = false;
+}
+
+void ExportToPDF() {
+    // Prevent double-click / multiple calls
+    static bool isExporting = false;
+    if (isExporting) {
+        return;
+    }
+    isExporting = true;
+    
+    // Get latest form data from UI fields before generating report
+    GetFormDataFromFields();
+    // Save form data to form_data.txt so it's always up to date
+    SaveFormData(false); // Silent save
+    
+    // Generate HTML report
+    std::string html = GenerateHTMLReport();
+    
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    
+    // Get application directory
+    char appPath[MAX_PATH];
+    DWORD result = GetModuleFileNameA(NULL, appPath, MAX_PATH);
+    if (result == 0 || result >= MAX_PATH) {
+        char errMsg[256];
+        sprintf_s(errMsg, "Failed to get application path! Error: %d", GetLastError());
+        MessageBoxA(g_hWnd, errMsg, "Error", MB_OK | MB_ICONERROR);
+        isExporting = false;
+        return;
+    }
+    
+    // Extract directory path (remove executable name)
+    char* lastSlash = strrchr(appPath, '\\');
+    if (lastSlash) {
+        *(lastSlash + 1) = '\0';
+    }
+    
+    // Create reports directory
+    std::string reportsDir = std::string(appPath) + "reports";
+    try {
+        std::filesystem::create_directories(reportsDir);
+    } catch (const std::exception& e) {
+        char errMsg[512];
+        sprintf_s(errMsg, "Failed to create reports directory!\nPath: %s\nError: %s", reportsDir.c_str(), e.what());
+        MessageBoxA(g_hWnd, errMsg, "Error", MB_OK | MB_ICONERROR);
+        isExporting = false;
+        return;
+    }
+    
+    // Create temporary HTML file
+    char tempPath[MAX_PATH];
+    GetTempPathA(MAX_PATH, tempPath);
+    char tempHtmlPath[MAX_PATH];
+    sprintf_s(tempHtmlPath, "%sPIWIPER_Temp_%02d%02d%04d_%02d%02d%02d.html", 
+        tempPath, st.wDay, st.wMonth, st.wYear, st.wHour, st.wMinute, st.wSecond);
+    
+    // Write HTML to temp file
+    std::ofstream tempFile(tempHtmlPath, std::ios::out | std::ios::trunc);
+    if (!tempFile.is_open()) {
+        char errMsg[512];
+        sprintf_s(errMsg, "Failed to create temporary HTML file!\nPath: %s\nError: %d", tempHtmlPath, GetLastError());
+        MessageBoxA(g_hWnd, errMsg, "Error", MB_OK | MB_ICONERROR);
+        isExporting = false;
+        return;
+    }
+    tempFile << html;
+    tempFile.close();
+    
+    // Verify temp file exists
+    if (GetFileAttributesA(tempHtmlPath) == INVALID_FILE_ATTRIBUTES) {
+        char errMsg[512];
+        sprintf_s(errMsg, "Temp HTML file was not created!\nPath: %s", tempHtmlPath);
+        MessageBoxA(g_hWnd, errMsg, "Error", MB_OK | MB_ICONERROR);
+        isExporting = false;
+        return;
+    }
+    
+    // Find Edge executable
+    char edgePath[MAX_PATH] = {0};
+    // Try common Edge locations
+    const char* edgePaths[] = {
+        "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"
+    };
+    
+    bool edgeFound = false;
+    for (int i = 0; i < 2; i++) {
+        if (GetFileAttributesA(edgePaths[i]) != INVALID_FILE_ATTRIBUTES) {
+            strcpy_s(edgePath, edgePaths[i]);
+            edgeFound = true;
+            break;
+        }
+    }
+    
+    if (!edgeFound) {
+        // Try registry
+        HKEY hKey;
+        if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\msedge.exe", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+            DWORD size = MAX_PATH;
+            if (RegQueryValueExA(hKey, NULL, NULL, NULL, (LPBYTE)edgePath, &size) == ERROR_SUCCESS) {
+                RegCloseKey(hKey);
+                if (GetFileAttributesA(edgePath) != INVALID_FILE_ATTRIBUTES) {
+                    edgeFound = true;
+                }
+            } else {
+                RegCloseKey(hKey);
+            }
+        }
+    }
+    
+    if (!edgeFound) {
+        MessageBoxA(g_hWnd, "Microsoft Edge not found! Please install Microsoft Edge to export PDF files.", "Error", MB_OK | MB_ICONERROR);
+        DeleteFileA(tempHtmlPath);
+        isExporting = false;
+        return;
+    }
+    
+    // Create PDF filename: serial_number_date_time.pdf or random_date_time.pdf
+    std::string serial = g_reportData.diskSerial;
+    if (serial.empty()) {
+        char randomName[16];
+        sprintf_s(randomName, "RND%04X", (unsigned int)(GetTickCount() % 0xFFFF));
+        serial = randomName;
+    }
+    
+    // Clean serial number for filename
+    std::string cleanSerial = serial;
+    for (char& c : cleanSerial) {
+        if (!isalnum(c) && c != '_' && c != '-') {
+            c = '_';
+        }
+    }
+    
+    // Create PDF path
+    char pdfPath[MAX_PATH];
+    sprintf_s(pdfPath, "%s\\%s_%02d%02d%04d_%02d%02d%02d.pdf", 
+        reportsDir.c_str(), cleanSerial.c_str(), 
+        st.wDay, st.wMonth, st.wYear, st.wHour, st.wMinute, st.wSecond);
+    
+    // Convert HTML to PDF using Edge headless mode
+    // Convert file path to file:// URL format (Windows: file:///C:/path/to/file.html)
+    std::string fileUrl = "file:///";
+    for (int i = 0; tempHtmlPath[i]; i++) {
+        if (tempHtmlPath[i] == '\\') {
+            fileUrl += '/';
+        } else if (tempHtmlPath[i] == ' ') {
+            fileUrl += "%20"; // URL encode spaces
+        } else {
+            fileUrl += tempHtmlPath[i];
+        }
+    }
+    
+    // Use Edge's print-to-pdf command with no header/footer
+    // Edge command format: msedge.exe --headless --disable-gpu --print-to-pdf=output.pdf --print-to-pdf-no-header input.html
+    // IMPORTANT: --print-to-pdf must come BEFORE the URL, and --print-to-pdf-no-header must come before --print-to-pdf
+    char cmdLine[2048];
+    // Use --print-to-pdf-no-header to remove date and file path from PDF
+    // Increased virtual-time-budget to 30000ms (30 seconds) for better reliability
+    // Added --no-sandbox for better compatibility
+    sprintf_s(cmdLine, "\"%s\" --headless --disable-gpu --no-sandbox --virtual-time-budget=30000 --print-to-pdf-no-header --print-to-pdf=\"%s\" \"%s\"", 
+        edgePath, pdfPath, fileUrl.c_str());
+    
+    STARTUPINFOA si = {sizeof(STARTUPINFOA)};
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi;
+    
+    if (CreateProcessA(NULL, cmdLine, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+        // Wait for conversion (max 90 seconds)
+        DWORD waitResult = WaitForSingleObject(pi.hProcess, 90000);
+        DWORD exitCode = 0;
+        GetExitCodeProcess(pi.hProcess, &exitCode);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        
+        // Check if PDF was created (wait a bit more for file system)
+        bool pdfCreated = false;
+        Sleep(1000);
+        for (int retry = 0; retry < 30; retry++) {
+            if (retry > 0) {
+                Sleep(1000);
+            }
+            if (GetFileAttributesA(pdfPath) != INVALID_FILE_ATTRIBUTES) {
+                // Check if file is not empty
+                WIN32_FILE_ATTRIBUTE_DATA fileAttr;
+                if (GetFileAttributesExA(pdfPath, GetFileExInfoStandard, &fileAttr)) {
+                    ULARGE_INTEGER fileSize;
+                    fileSize.LowPart = fileAttr.nFileSizeLow;
+                    fileSize.HighPart = fileAttr.nFileSizeHigh;
+                    if (fileSize.QuadPart > 0) {
+                        pdfCreated = true;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        if (pdfCreated || GetFileAttributesA(pdfPath) != INVALID_FILE_ATTRIBUTES) {
+            // Delete temp HTML file
+            DeleteFileA(tempHtmlPath);
+            
+            // Find browser to open PDF (Chrome first, then Edge, then default)
+            char browserPath[MAX_PATH] = {0};
+            bool browserFound = false;
+            
+            // Try Chrome first
+            const char* chromePaths[] = {
+                "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+                "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"
+            };
+            
+            for (int i = 0; i < 2; i++) {
+                if (GetFileAttributesA(chromePaths[i]) != INVALID_FILE_ATTRIBUTES) {
+                    strcpy_s(browserPath, chromePaths[i]);
+                    browserFound = true;
+                    break;
+                }
+            }
+            
+            // If Chrome not found, use Edge
+            if (!browserFound) {
+                const char* edgePathsForOpen[] = {
+                    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+                    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"
+                };
+                
+                for (int i = 0; i < 2; i++) {
+                    if (GetFileAttributesA(edgePathsForOpen[i]) != INVALID_FILE_ATTRIBUTES) {
+                        strcpy_s(browserPath, edgePathsForOpen[i]);
+                        browserFound = true;
+                        break;
+                    }
+                }
+            }
+            
+            // Open PDF with browser
+            if (browserFound) {
+                char browserCmd[1024];
+                sprintf_s(browserCmd, "\"%s\" \"%s\"", browserPath, pdfPath);
+                
+                STARTUPINFOA si3 = {sizeof(STARTUPINFOA)};
+                si3.dwFlags = STARTF_USESHOWWINDOW;
+                si3.wShowWindow = SW_SHOWNORMAL;
+                PROCESS_INFORMATION pi3;
+                
+                if (CreateProcessA(NULL, browserCmd, NULL, NULL, FALSE, 0, NULL, NULL, &si3, &pi3)) {
+                    CloseHandle(pi3.hProcess);
+                    CloseHandle(pi3.hThread);
+                    
+                    char successMsg[512];
+                    sprintf_s(successMsg, "PDF exported successfully!\n\nFile: %s\n\nOpened in browser.", pdfPath);
+                    MessageBoxA(g_hWnd, successMsg, "PDF Export Success", MB_OK | MB_ICONINFORMATION);
+                } else {
+                    // Fallback to ShellExecute
+                    HINSTANCE hResult = ShellExecuteA(NULL, "open", pdfPath, NULL, NULL, SW_SHOWNORMAL);
+                    INT_PTR resultCode = (INT_PTR)hResult;
+                    
+                    if (resultCode > 32) {
+                        char successMsg[512];
+                        sprintf_s(successMsg, "PDF exported successfully!\n\nFile: %s", pdfPath);
+                        MessageBoxA(g_hWnd, successMsg, "PDF Export Success", MB_OK | MB_ICONINFORMATION);
+                    } else {
+                        char errMsg[512];
+                        sprintf_s(errMsg, "PDF created but failed to open!\n\nPath: %s\n\nPlease open manually.", pdfPath);
+                        MessageBoxA(g_hWnd, errMsg, "PDF Created", MB_OK | MB_ICONWARNING);
+                    }
+                }
+            } else {
+                // No browser found, try ShellExecute
+                HINSTANCE hResult = ShellExecuteA(NULL, "open", pdfPath, NULL, NULL, SW_SHOWNORMAL);
+                INT_PTR resultCode = (INT_PTR)hResult;
+                
+                if (resultCode > 32) {
+                    char successMsg[512];
+                    sprintf_s(successMsg, "PDF exported successfully!\n\nFile: %s", pdfPath);
+                    MessageBoxA(g_hWnd, successMsg, "PDF Export Success", MB_OK | MB_ICONINFORMATION);
+                } else {
+                    // Try alternative: Use explorer to select and highlight the file
+                    char explorerCmd[512];
+                    sprintf_s(explorerCmd, "explorer.exe /select,\"%s\"", pdfPath);
+                    
+                    STARTUPINFOA si2 = {sizeof(STARTUPINFOA)};
+                    si2.dwFlags = STARTF_USESHOWWINDOW;
+                    si2.wShowWindow = SW_SHOWNORMAL;
+                    PROCESS_INFORMATION pi2;
+                    CreateProcessA(NULL, explorerCmd, NULL, NULL, FALSE, 0, NULL, NULL, &si2, &pi2);
+                    CloseHandle(pi2.hProcess);
+                    CloseHandle(pi2.hThread);
+                    
+                    // Show message with option to open folder
+                    char finalMsg[1024];
+                    sprintf_s(finalMsg, "PDF created successfully!\n\nPath: %s\n\nFile should be selected in Explorer. If it didn't open, would you like to open the reports folder?", pdfPath);
+                    int msgResult = MessageBoxA(g_hWnd, finalMsg, "PDF Created", MB_YESNO | MB_ICONINFORMATION);
+                    if (msgResult == IDYES) {
+                        char folderPath[512];
+                        sprintf_s(folderPath, "\"%s\"", reportsDir.c_str());
+                        ShellExecuteA(NULL, "open", folderPath, NULL, NULL, SW_SHOWNORMAL);
+                    }
+                }
+            }
+            
+        } else {
+            DeleteFileA(tempHtmlPath);
+            char errMsg[1024];
+            sprintf_s(errMsg, "Failed to create PDF file!\n\nEdge exit code: %d\nWait result: %d\nTemp HTML: %s\nPDF Path: %s\n\nPlease check:\n1. Microsoft Edge is installed\n2. File permissions are correct\n3. Disk space is available", exitCode, waitResult, tempHtmlPath, pdfPath);
+            MessageBoxA(g_hWnd, errMsg, "Error", MB_OK | MB_ICONERROR);
+        }
+    } else {
+        DeleteFileA(tempHtmlPath);
+        DWORD err = GetLastError();
+        char errMsg[512];
+        sprintf_s(errMsg, "Failed to start Edge process!\nError: %d", err);
+        MessageBoxA(g_hWnd, errMsg, "Error", MB_OK | MB_ICONERROR);
+    }
+    
+    isExporting = false;
 }
 
 void UpdateReportPreview() {
     // Update the preview area with report content - Plain text format for EDIT control
+    
+    // Get latest form data from UI fields before generating preview
+    GetFormDataFromFields();
+    // Save form data to form_data.txt so it's always up to date
+    SaveFormData(false); // Silent save
+    
     std::string reportText = "";
     
     // Header - Certificate Style
@@ -968,6 +1742,83 @@ struct WipeParams {
     std::string busType;
 };
 
+// Write erase signature to first sectors of disk
+bool WriteEraseSignature(int diskNumber) {
+    char diskPath[64];
+    sprintf_s(diskPath, "\\\\.\\PhysicalDrive%d", diskNumber);
+    
+    HANDLE hDisk = CreateFileA(diskPath, GENERIC_READ | GENERIC_WRITE, 
+        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    
+    if (hDisk == INVALID_HANDLE_VALUE) {
+        DWORD err = GetLastError();
+        char errMsg[256];
+        sprintf_s(errMsg, "Failed to open disk for signature write. Error: %d", err);
+        LogMessage("ERROR: " + std::string(errMsg));
+        return false;
+    }
+    
+    // Get current date and time
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char dateTimeStr[64];
+    sprintf_s(dateTimeStr, "%02d/%02d/%04d %02d:%02d:%02d", 
+        st.wDay, st.wMonth, st.wYear, st.wHour, st.wMinute, st.wSecond);
+    
+    // Create signature message
+    char signature[512] = {0}; // 512 bytes (1 sector)
+    sprintf_s(signature, sizeof(signature), 
+        "Erased by PIWIPER-Tekniknokta\r\n"
+        "Date: %s\r\n"
+        "Professional Disk Erasure Service\r\n"
+        "This disk has been securely erased.\r\n"
+        "All data has been permanently removed.\r\n"
+        "PIWIPER v%s\r\n"
+        "========================================\r\n",
+        dateTimeStr, PIWIPER_VERSION_SHORT);
+    
+    // Pad remaining space with nulls (already initialized to 0)
+    // The signature is exactly 512 bytes (one sector)
+    
+    // Move to beginning of disk
+    LARGE_INTEGER li;
+    li.QuadPart = 0;
+    LARGE_INTEGER newPos;
+    if (!SetFilePointerEx(hDisk, li, &newPos, FILE_BEGIN)) {
+        DWORD err = GetLastError();
+        char errMsg[256];
+        sprintf_s(errMsg, "Failed to seek to disk start. Error: %d", err);
+        LogMessage("ERROR: " + std::string(errMsg));
+        CloseHandle(hDisk);
+        return false;
+    }
+    
+    // Write signature to first sector (512 bytes)
+    DWORD written = 0;
+    if (!WriteFile(hDisk, signature, 512, &written, nullptr)) {
+        DWORD err = GetLastError();
+        char errMsg[256];
+        sprintf_s(errMsg, "Failed to write erase signature. Error: %d", err);
+        LogMessage("ERROR: " + std::string(errMsg));
+        CloseHandle(hDisk);
+        return false;
+    }
+    
+    if (written != 512) {
+        LogMessage("WARNING: Only wrote " + std::to_string(written) + " bytes instead of 512");
+    }
+    
+    // Flush file buffers
+    FlushFileBuffers(hDisk);
+    CloseHandle(hDisk);
+    
+    char logMsg[256];
+    sprintf_s(logMsg, "Erase signature written to disk: %s", dateTimeStr);
+    LogMessage(logMsg);
+    
+    return true;
+}
+
 DWORD WINAPI WipeThread(LPVOID param) {
     WipeParams* wp = (WipeParams*)param;
     
@@ -1024,6 +1875,16 @@ DWORD WINAPI WipeThread(LPVOID param) {
                 if (g_cancelRequested) break;
                 PostMessage(g_hWnd, WM_UPDATE_PROGRESS, pct, estSeconds - (pct * estSeconds / 100));
                 Sleep(300);
+            }
+            
+            // Write erase signature to first sector after successful quick wipe
+            if (success && !g_cancelRequested) {
+                LogMessage("Writing erase signature to disk...");
+                if (WriteEraseSignature(wp->diskNumber)) {
+                    notes += " | Signature written";
+                } else {
+                    notes += " | Signature write failed (non-critical)";
+                }
             }
             
         } else {
@@ -1128,6 +1989,14 @@ DWORD WINAPI WipeThread(LPVOID param) {
                 if (success && !g_cancelRequested) {
                     notes = "Secure wipe completed - " + std::to_string(totalMB) + " MB zeroed";
                     LogMessage(notes);
+                    
+                    // Write erase signature to first sector after successful secure wipe
+                    LogMessage("Writing erase signature to disk...");
+                    if (WriteEraseSignature(wp->diskNumber)) {
+                        notes += " | Signature written";
+                    } else {
+                        notes += " | Signature write failed (non-critical)";
+                    }
                 } else if (g_cancelRequested) {
                     notes = "Secure wipe cancelled by user";
                     LogMessage(notes);
@@ -1423,6 +2292,27 @@ void WipeSelectedDisk() {
         return;
     }
     
+    // Check wipe counter
+    if (g_wipeCounter <= 0) {
+        char msg[256];
+        sprintf_s(msg, "Wipe counter has reached zero (%d / %d).\n\nNo more wipe operations are allowed.\n\nPlease contact the administrator.", g_wipeCounter, WIPE_COUNTER_LIMIT);
+        MessageBoxA(g_hWnd, msg, "Wipe Counter Exceeded", MB_OK | MB_ICONWARNING);
+        
+        // Add message to status text
+        if (g_hStatusText) {
+            AppendStatusMessage("Please contact product vendor Tekniknokta for wipe more");
+        }
+        
+        // Show counter message in red
+        if (g_hWipeCounterMessage) {
+            SetWindowTextA(g_hWipeCounterMessage, "Please contact product vendor Tekniknokta for wipe more");
+            ShowWindow(g_hWipeCounterMessage, SW_SHOW);
+            InvalidateRect(g_hWipeCounterMessage, nullptr, TRUE);
+            UpdateWindow(g_hWipeCounterMessage);
+        }
+        return;
+    }
+    
     isProcessing = true;
     
     int selected = ListView_GetNextItem(g_hListView, -1, LVNI_SELECTED);
@@ -1644,6 +2534,33 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 950, 425, 180, 20, hwnd, (HMENU)ID_ETA_TEXT, g_hInstance, nullptr);
             SendMessage(g_hEtaText, WM_SETFONT, (WPARAM)hNormalFont, TRUE);
             
+            // Wipe counter display (bottom right, below status text)
+            // Status text: Y=550, Height=175, ends at Y=725, X=10, Width=1120
+            // Counter text: placed at Y=730 (5px below status text), Height=25, ends at Y=755
+            // Client area height is typically 751, so Y=730 ensures it's visible and doesn't overlap with status text
+            char counterText[64];
+            sprintf_s(counterText, "Wipe Counter: %d / %d", g_wipeCounter, WIPE_COUNTER_LIMIT);
+            
+            g_hWipeCounterText = CreateWindowA("STATIC", counterText, WS_VISIBLE | WS_CHILD | SS_RIGHT,
+                960, 730, 170, 25, hwnd, (HMENU)ID_WIPE_COUNTER_TEXT, g_hInstance, nullptr);
+            
+            SendMessage(g_hWipeCounterText, WM_SETFONT, (WPARAM)hNormalFont, TRUE);
+            
+            // Ensure counter text is visible and on top
+            SetWindowPos(g_hWipeCounterText, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+            ShowWindow(g_hWipeCounterText, SW_SHOW);
+            
+            // Force update and redraw
+            InvalidateRect(g_hWipeCounterText, nullptr, TRUE);
+            UpdateWindow(g_hWipeCounterText);
+            
+            // Counter message text (shown when counter is 0) - red color, to the left of counter text
+            // Counter text: X=960, Width=170, so message at X=500 (more space for longer text)
+            g_hWipeCounterMessage = CreateWindowA("STATIC", "", WS_VISIBLE | WS_CHILD | SS_RIGHT,
+                500, 730, 450, 25, hwnd, (HMENU)ID_WIPE_COUNTER_MESSAGE, g_hInstance, nullptr);
+            SendMessage(g_hWipeCounterMessage, WM_SETFONT, (WPARAM)hNormalFont, TRUE);
+            ShowWindow(g_hWipeCounterMessage, SW_HIDE); // Initially hidden
+            
             // Buttons (modern style with owner-draw for rounded corners + BS_NOTIFY for hover)
             // Buttons centered and properly aligned
             // Small buttons (Refresh, Exit) - top row, Exit on right (moved down for tabs)
@@ -1653,9 +2570,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             g_hBtnExit = CreateWindowA("BUTTON", "Exit", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW | BS_NOTIFY,
                 1000, 490, 120, 35, hwnd, (HMENU)ID_BTN_EXIT, g_hInstance, nullptr);
             
-            // Header button (About as small icon)
+            // Header button (About as small icon) - vertically centered in header (90px height)
+            // Button: 40x40, Y = (90-40)/2 = 25, X = 1100 (right aligned with 10px margin)
             CreateWindowA("BUTTON", "i", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW | BS_NOTIFY,
-                1080, 25, 40, 40, hwnd, (HMENU)ID_ABOUT_DIALOG, g_hInstance, nullptr);
+                1100, 25, 40, 40, hwnd, (HMENU)ID_ABOUT_DIALOG, g_hInstance, nullptr);
             
             // Tab buttons below header (like in the image) - proper tab appearance
             CreateWindowA("BUTTON", "Erasure", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW | BS_NOTIFY,
@@ -1794,9 +2712,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             EnableWindow(g_hBtnCancel, FALSE); // Initially disabled
             
             // Status log at bottom (multiline, read-only, auto-scroll) - moved down for tabs
+            // Height reduced from 200 to 175 to make room for counter text below
             g_hStatusText = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", 
                 WS_VISIBLE | WS_CHILD | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
-                10, 550, 1120, 200, hwnd, (HMENU)ID_STATUS_TEXT, g_hInstance, nullptr);
+                10, 550, 1120, 175, hwnd, (HMENU)ID_STATUS_TEXT, g_hInstance, nullptr);
             SendMessage(g_hStatusText, WM_SETFONT, (WPARAM)hNormalFont, TRUE);
             SetWindowTextA(g_hStatusText, "[System] Application started - Scanning disks...\r\n");
             
@@ -1842,8 +2761,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             
             // Force repaint to show header gradient
             InvalidateRect(hwnd, NULL, TRUE);
-            
             return 0;
+        }
+        
+        case WM_CTLCOLORSTATIC: {
+            // Color the counter message text red when visible
+            if ((HWND)lParam == g_hWipeCounterMessage) {
+                HDC hdc = (HDC)wParam;
+                SetTextColor(hdc, RGB(255, 0, 0)); // Red color
+                SetBkMode(hdc, TRANSPARENT);
+                return (INT_PTR)GetStockObject(NULL_BRUSH);
+            }
+            break;
         }
         
         case WM_PAINT: {
@@ -1874,25 +2803,60 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             gRect.LowerRight = 1;
             GradientFill(hdc, vertex, 2, &gRect, 1, GRADIENT_FILL_RECT_H);
             
-            // Draw icon circle (disk symbol)
-            HBRUSH hIconBrush = CreateSolidBrush(RGB(255, 255, 255));
-            HPEN hIconPen = CreatePen(PS_SOLID, 2, RGB(255, 255, 255));
-            HBRUSH hOldBrush = (HBRUSH)SelectObject(hdc, hIconBrush);
-            HPEN hOldPen = (HPEN)SelectObject(hdc, hIconPen);
+            // Load and draw logo from disk-temp.png
+            // Get executable directory
+            char exePath[MAX_PATH];
+            GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+            std::string exeDir = exePath;
+            size_t lastSlash = exeDir.find_last_of("\\/");
+            if (lastSlash != std::string::npos) {
+                exeDir = exeDir.substr(0, lastSlash + 1);
+            }
             
-            // Draw disk icon outline
-            SelectObject(hdc, GetStockObject(NULL_BRUSH)); // Hollow circle
-            Ellipse(hdc, 25, 20, 65, 60);
+            std::string logoPath = exeDir + "disk-temp.png";
+            // Try current directory if not found in exe directory
+            if (GetFileAttributesA(logoPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
+                logoPath = "disk-temp.png";
+            }
             
-            // Draw inner circle (disk center)
-            Ellipse(hdc, 38, 33, 52, 47);
+            // Header dimensions: 1150x90, logo size: 40x40
+            // Logo position: X=25, Y=25 (vertically centered: (90-40)/2 = 25)
+            const int logoX = 25;
+            const int logoY = 25;
+            const int logoSize = 40;
+            const int logoRight = logoX + logoSize; // 65
             
-            SelectObject(hdc, hOldBrush);
-            SelectObject(hdc, hOldPen);
-            DeleteObject(hIconBrush);
-            DeleteObject(hIconPen);
+            // Load PNG using GDI+
+            Graphics graphics(hdc);
+            std::wstring wLogoPath(logoPath.begin(), logoPath.end());
+            Image* pImage = new Image(wLogoPath.c_str());
             
-            // Draw modern title (no shadow for cleaner look)
+            if (pImage && pImage->GetLastStatus() == Ok) {
+                // Draw logo at position (25, 25) with size 40x40 (vertically centered)
+                graphics.DrawImage(pImage, logoX, logoY, logoSize, logoSize);
+                delete pImage;
+            } else {
+                // Fallback: Draw icon circle (disk symbol) if PNG fails to load
+                if (pImage) delete pImage;
+                HBRUSH hIconBrush = CreateSolidBrush(RGB(255, 255, 255));
+                HPEN hIconPen = CreatePen(PS_SOLID, 2, RGB(255, 255, 255));
+                HBRUSH hOldBrush = (HBRUSH)SelectObject(hdc, hIconBrush);
+                HPEN hOldPen = (HPEN)SelectObject(hdc, hIconPen);
+                
+                // Draw disk icon outline (vertically centered)
+                SelectObject(hdc, GetStockObject(NULL_BRUSH)); // Hollow circle
+                Ellipse(hdc, logoX, logoY, logoRight, logoY + logoSize);
+                
+                // Draw inner circle (disk center)
+                Ellipse(hdc, logoX + 13, logoY + 13, logoX + 27, logoY + 27);
+                
+                SelectObject(hdc, hOldBrush);
+                SelectObject(hdc, hOldPen);
+                DeleteObject(hIconBrush);
+                DeleteObject(hIconPen);
+            }
+            
+            // Draw modern title (aligned after logo, vertically centered)
             SetBkMode(hdc, TRANSPARENT);
             SetTextColor(hdc, RGB(255, 255, 255)); // Pure white
             
@@ -1900,17 +2864,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, FF_SWISS | VARIABLE_PITCH, "Verdana");
             HFONT hOldFont = (HFONT)SelectObject(hdc, hTitleFont);
             
-            RECT titleRect = {120, 15, 1150, 90};
+            // Title: X=80 (logo right + 15px spacing), vertically centered
+            RECT titleRect = {logoRight + 15, 0, 1150, 90};
             DrawTextA(hdc, "PIWIPER", -1, &titleRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
             
-            // Subtitle with better contrast
+            // Subtitle with better contrast (right aligned, before About button)
             SelectObject(hdc, hOldFont);
             HFONT hSubFont = CreateFontA(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                 OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, FF_SWISS | VARIABLE_PITCH, "Verdana");
             SelectObject(hdc, hSubFont);
             SetTextColor(hdc, RGB(220, 235, 255)); // Lighter for better contrast
-            RECT subRect = {600, 15, 1150, 90};
-            DrawTextA(hdc, "Professional Disk Eraser", -1, &subRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            
+            // Subtitle: Right aligned, before About button (X=1100), with 10px margin
+            // About button is 40px wide, so subtitle ends at X=1090
+            RECT subRect = {0, 0, 1090, 90};
+            DrawTextA(hdc, "Professional Disk Eraser", -1, &subRect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
             
             SelectObject(hdc, hOldFont);
             DeleteObject(hTitleFont);
@@ -1952,6 +2920,23 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 ShowWindow(g_hProgressBar, SW_SHOW);
                 ShowWindow(g_hProgressBarFine, SW_SHOW);
                 ShowWindow(g_hEtaText, SW_SHOW);
+                if (g_hWipeCounterText) {
+                    ShowWindow(g_hWipeCounterText, SW_SHOW);
+                    SetWindowPos(g_hWipeCounterText, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                    InvalidateRect(g_hWipeCounterText, nullptr, TRUE);
+                    UpdateWindow(g_hWipeCounterText);
+                }
+                
+                // Show counter message if counter is 0
+                if (g_hWipeCounterMessage) {
+                    if (g_wipeCounter <= 0) {
+                        ShowWindow(g_hWipeCounterMessage, SW_SHOW);
+                        InvalidateRect(g_hWipeCounterMessage, nullptr, TRUE);
+                        UpdateWindow(g_hWipeCounterMessage);
+                    } else {
+                        ShowWindow(g_hWipeCounterMessage, SW_HIDE);
+                    }
+                }
                 ShowWindow(g_hBtnWipe, SW_SHOW);
                 ShowWindow(g_hBtnCancel, SW_HIDE); // Hide cancel button initially
                 ShowWindow(g_hBtnRefresh, SW_SHOW); // Show Refresh button
@@ -2004,6 +2989,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 ShowWindow(g_hProgressBar, SW_HIDE);
                 ShowWindow(g_hProgressBarFine, SW_HIDE);
                 ShowWindow(g_hEtaText, SW_HIDE);
+                ShowWindow(g_hWipeCounterText, SW_HIDE);
+                ShowWindow(g_hWipeCounterMessage, SW_HIDE);
                 ShowWindow(g_hBtnWipe, SW_HIDE);
                 ShowWindow(g_hBtnCancel, SW_HIDE);
                 ShowWindow(g_hBtnRefresh, SW_HIDE); // Hide Refresh button
@@ -2105,7 +3092,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 ShowWindow(GetDlgItem(hwnd, ID_PREVIEW_BUTTON), SW_HIDE);
                 ShowWindow(GetDlgItem(hwnd, ID_EXPORT_PDF_BUTTON), SW_HIDE);
                 ShowWindow(GetDlgItem(hwnd, ID_REPORT_PREVIEW_AREA), SW_HIDE);
-                // Update form fields with loaded data
+                
+                // Reload form data from file to ensure we have latest values
+                LoadFormData();
+                // Update form fields with loaded data (after all windows are shown)
                 UpdateFormFields();
                 // Force redraw to update tab colors
                 InvalidateRect(hwnd, nullptr, TRUE);
@@ -2118,6 +3108,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 ShowWindow(g_hProgressBar, SW_HIDE);
                 ShowWindow(g_hProgressBarFine, SW_HIDE);
                 ShowWindow(g_hEtaText, SW_HIDE);
+                ShowWindow(g_hWipeCounterText, SW_HIDE);
+                ShowWindow(g_hWipeCounterMessage, SW_HIDE);
                 ShowWindow(g_hBtnWipe, SW_HIDE);
                 ShowWindow(g_hBtnCancel, SW_HIDE);
                 ShowWindow(g_hBtnRefresh, SW_HIDE); // Hide Refresh button
@@ -2162,9 +3154,31 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 SaveFormData(true); // Show message
                 isSaving = false;
             } else if (id == ID_PREVIEW_BUTTON) {
-                ShowPreviewDialog();
+                // Only process BN_CLICKED notification to prevent duplicate calls
+                if (notifyCode == BN_CLICKED) {
+                    static DWORD lastClickTime = 0;
+                    DWORD currentTime = GetTickCount();
+                    // Prevent clicks within 1000ms (1 second)
+                    if (currentTime - lastClickTime < 1000) {
+                        OutputDebugStringA("[DEBUG] Preview button clicked too soon, ignoring duplicate click\n");
+                        return 0;
+                    }
+                    lastClickTime = currentTime;
+                    ShowPreviewDialog();
+                }
             } else if (id == ID_EXPORT_PDF_BUTTON) {
-                MessageBoxA(hwnd, "PDF export functionality will be implemented soon!", "Export PDF", MB_OK | MB_ICONINFORMATION);
+                // Only process BN_CLICKED notification to prevent duplicate calls
+                if (notifyCode == BN_CLICKED) {
+                    static DWORD lastClickTime = 0;
+                    DWORD currentTime = GetTickCount();
+                    // Prevent clicks within 1000ms (1 second)
+                    if (currentTime - lastClickTime < 1000) {
+                        OutputDebugStringA("[DEBUG] Export PDF button clicked too soon, ignoring duplicate click\n");
+                        return 0;
+                    }
+                    lastClickTime = currentTime;
+                    ExportToPDF();
+                }
             } else if (id == ID_METHOD_COMBO && notifyCode == CBN_SELCHANGE) {
                 int sel = SendMessage(g_hMethodCombo, CB_GETCURSEL, 0, 0);
                 if (sel == 0) {
@@ -2268,7 +3282,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_WIPE_COMPLETE: {
             g_isWiping = false;
             g_wipeProcessHandle = NULL;
-            EnableWindow(g_hBtnWipe, TRUE);
+            // Enable wipe button only if counter > 0
+            EnableWindow(g_hBtnWipe, g_wipeCounter > 0);
             EnableWindow(g_hBtnRefresh, TRUE);
             EnableWindow(g_hBtnCancel, FALSE); // Disable cancel button
             ShowWindow(g_hBtnCancel, SW_HIDE); // Hide cancel button
@@ -2279,7 +3294,56 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 g_cancelRequested = false; // Reset flag
             } else if (wParam == 1) {
                 LogMessage("Wipe completed successfully!");
-                MessageBoxA(hwnd, "Disk wipe completed successfully!", "Success", MB_OK | MB_ICONINFORMATION);
+                
+                // Decrement wipe counter on successful wipe
+                if (g_wipeCounter > 0) {
+                    g_wipeCounter--;
+                    char counterMsg[128];
+                    sprintf_s(counterMsg, "Wipe counter decremented. Remaining: %d / %d", g_wipeCounter, WIPE_COUNTER_LIMIT);
+                    LogMessage(counterMsg);
+                    
+                    // Update counter display
+                    if (g_hWipeCounterText) {
+                        char counterText[64];
+                        sprintf_s(counterText, "Wipe Counter: %d / %d", g_wipeCounter, WIPE_COUNTER_LIMIT);
+                        SetWindowTextA(g_hWipeCounterText, counterText);
+                        
+                        // Ensure counter text is visible and properly positioned after wipe
+                        ShowWindow(g_hWipeCounterText, SW_SHOW);
+                        SetWindowPos(g_hWipeCounterText, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                        InvalidateRect(g_hWipeCounterText, nullptr, TRUE);
+                        UpdateWindow(g_hWipeCounterText);
+                    }
+                    
+                    // Disable wipe button if counter reached zero
+                    if (g_wipeCounter <= 0) {
+                        EnableWindow(g_hBtnWipe, FALSE);
+                        char msg[256];
+                        sprintf_s(msg, "Disk wipe completed successfully!\n\nWipe counter has reached zero. No more wipe operations are allowed.");
+                        MessageBoxA(hwnd, msg, "Success - Counter Exceeded", MB_OK | MB_ICONINFORMATION);
+                        
+                        // Add message to status text
+                        if (g_hStatusText) {
+                            AppendStatusMessage("Please contact product vendor Tekniknokta for wipe more");
+                        }
+                        
+                        // Show counter message in red
+                        if (g_hWipeCounterMessage) {
+                            SetWindowTextA(g_hWipeCounterMessage, "Please contact product vendor Tekniknokta for wipe more");
+                            ShowWindow(g_hWipeCounterMessage, SW_SHOW);
+                            InvalidateRect(g_hWipeCounterMessage, nullptr, TRUE);
+                            UpdateWindow(g_hWipeCounterMessage);
+                        }
+                    } else {
+                        // Hide counter message if counter > 0
+                        if (g_hWipeCounterMessage) {
+                            ShowWindow(g_hWipeCounterMessage, SW_HIDE);
+                        }
+                        MessageBoxA(hwnd, "Disk wipe completed successfully!", "Success", MB_OK | MB_ICONINFORMATION);
+                    }
+                } else {
+                    MessageBoxA(hwnd, "Disk wipe completed successfully!", "Success", MB_OK | MB_ICONINFORMATION);
+                }
             } else {
                 LogMessage("Wipe failed!");
                 MessageBoxA(hwnd, "Disk wipe failed! Check log for details.", "Error", MB_OK | MB_ICONERROR);
@@ -2437,7 +3501,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                              tabRect.right, tabRect.bottom, 4, 4);
                 } else {
                     // Draw rounded rectangle for all other buttons (8px radius)
-                RoundRect(dis->hDC, btnRect.left, btnRect.top, 
+                    RoundRect(dis->hDC, btnRect.left, btnRect.top, 
                          btnRect.right, btnRect.bottom, 8, 8);
                 }
                 
@@ -2458,7 +3522,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             break;
         }
         
-        case WM_DESTROY:
+        case WM_DESTROY: {
+            // Clean up GDI+
+            if (g_gdiplusToken) {
+                GdiplusShutdown(g_gdiplusToken);
+            }
+            
             // Clean up brushes
             if (g_hBtnBlueBrush) DeleteObject(g_hBtnBlueBrush);
             if (g_hBtnRedBrush) DeleteObject(g_hBtnRedBrush);
@@ -2470,6 +3539,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             
             PostQuitMessage(0);
             return 0;
+        }
     }
     
     return DefWindowProc(hwnd, msg, wParam, lParam);
@@ -2478,6 +3548,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 // WinMain entry point
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     g_hInstance = hInstance;
+    
+    // Initialize GDI+
+    GdiplusStartupInput gdiplusStartupInput;
+    GdiplusStartup(&g_gdiplusToken, &gdiplusStartupInput, nullptr);
     
     // Load RichEdit library
     LoadLibraryA("riched20.dll");
@@ -2496,8 +3570,62 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     wc.lpszClassName = "DiskWiperGUI";
     wc.hbrBackground = CreateSolidBrush(RGB(240, 242, 245)); // Modern light gray background
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_MAINICON));
-    wc.hIconSm = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_MAINICON));
+    
+    // Load icon from file (fallback if resource fails)
+    HICON hIcon = nullptr;
+    HICON hIconSm = nullptr;
+    
+    // Try to load from resource first
+    hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_MAINICON));
+    hIconSm = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_MAINICON));
+    
+    if (!hIcon) {
+        // Get executable directory
+        char exePath[MAX_PATH];
+        GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+        std::string exeDir = exePath;
+        size_t lastSlash = exeDir.find_last_of("\\/");
+        if (lastSlash != std::string::npos) {
+            exeDir = exeDir.substr(0, lastSlash + 1);
+        }
+        
+        std::string iconPath = exeDir + "src\\piwiper.ico";
+        
+        // Try LoadImage first
+        hIcon = (HICON)LoadImageA(nullptr, iconPath.c_str(), IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE);
+        hIconSm = (HICON)LoadImageA(nullptr, iconPath.c_str(), IMAGE_ICON, 16, 16, LR_LOADFROMFILE);
+        
+        if (!hIcon) {
+            // Try ExtractIconEx as alternative
+            UINT numIcons = 0;
+            HICON largeIcons[1] = { nullptr };
+            HICON smallIcons[1] = { nullptr };
+            
+            numIcons = ExtractIconExA(iconPath.c_str(), 0, largeIcons, smallIcons, 1);
+            if (numIcons > 0 && largeIcons[0]) {
+                hIcon = largeIcons[0];
+                hIconSm = smallIcons[0] ? smallIcons[0] : largeIcons[0];
+            } else {
+                // If that fails, try current directory
+                iconPath = "src\\piwiper.ico";
+                if (GetFileAttributesA(iconPath.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                    hIcon = (HICON)LoadImageA(nullptr, iconPath.c_str(), IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE);
+                    hIconSm = (HICON)LoadImageA(nullptr, iconPath.c_str(), IMAGE_ICON, 16, 16, LR_LOADFROMFILE);
+                    
+                    if (!hIcon) {
+                        numIcons = ExtractIconExA(iconPath.c_str(), 0, largeIcons, smallIcons, 1);
+                        if (numIcons > 0 && largeIcons[0]) {
+                            hIcon = largeIcons[0];
+                            hIconSm = smallIcons[0] ? smallIcons[0] : largeIcons[0];
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    wc.hIcon = hIcon;
+    wc.hIconSm = hIconSm;
     
     if (!RegisterClassExA(&wc)) {
         MessageBoxA(nullptr, "Window registration failed!", "Error", MB_OK | MB_ICONERROR);
@@ -2506,7 +3634,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     
     // Calculate centered position
     int windowWidth = 1150;
-    int windowHeight = 800;
+    int windowHeight = 790; // Adjusted to fit wipe counter (counter at Y=755, height=25, ends at Y=780, fully visible)
     int screenWidth = GetSystemMetrics(SM_CXSCREEN);
     int screenHeight = GetSystemMetrics(SM_CYSCREEN);
     int posX = (screenWidth - windowWidth) / 2;
@@ -2527,6 +3655,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     ShowWindow(g_hWnd, nCmdShow);
     UpdateWindow(g_hWnd);
     
+    // Ensure counter text is visible after parent window is shown
+    if (g_hWipeCounterText) {
+        ShowWindow(g_hWipeCounterText, SW_SHOW);
+        SetWindowPos(g_hWipeCounterText, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+        InvalidateRect(g_hWipeCounterText, nullptr, TRUE);
+        UpdateWindow(g_hWipeCounterText);
+    }
+    
     // Message loop
     MSG msg;
     while (GetMessage(&msg, nullptr, 0, 0)) {
@@ -2536,4 +3672,5 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     
     return (int)msg.wParam;
 }
+
 

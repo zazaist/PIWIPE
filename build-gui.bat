@@ -14,6 +14,13 @@ if exist "main_gui.obj" (
     echo Removing old object files...
     del /F /Q "main_gui.obj" >nul 2>&1
 )
+if exist "src\piwiper.res" (
+    echo Removing old resource files...
+    del /F /Q "src\piwiper.res" >nul 2>&1
+)
+if exist "src\version.res" (
+    del /F /Q "src\version.res" >nul 2>&1
+)
 
 REM Load Visual Studio environment
 if exist "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" (
@@ -36,8 +43,36 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-echo Compiling GUI version (without resources for now)...
-cl /EHsc /W4 /std:c++17 /I. src\main_gui.cpp /Fe:piwiper-gui-debug.exe user32.lib comctl32.lib gdi32.lib msimg32.lib advapi32.lib shell32.lib /link /SUBSYSTEM:WINDOWS
+echo Compiling resource files...
+cd src
+rc /fo piwiper.res /I. piwiper.rc
+if %ERRORLEVEL% neq 0 (
+    echo Resource compilation failed - trying without icon...
+    REM Try without icon if it fails
+    copy piwiper.rc piwiper.rc.bak >nul
+    powershell -Command "(Get-Content piwiper.rc) -replace 'IDI_MAINICON.*ICON.*piwiper.ico', '// IDI_MAINICON ICON \"piwiper.ico\"' | Set-Content piwiper.rc"
+    rc /fo piwiper.res /I. piwiper.rc
+    if %ERRORLEVEL% neq 0 (
+        echo Resource compilation failed completely
+        copy piwiper.rc.bak piwiper.rc >nul
+        cd ..
+        pause
+        exit /b 1
+    )
+    copy piwiper.rc.bak piwiper.rc >nul
+    del piwiper.rc.bak >nul
+)
+rc /fo version.res /I. version.rc
+if %ERRORLEVEL% neq 0 (
+    echo Version resource compilation failed
+    cd ..
+    pause
+    exit /b 1
+)
+cd ..
+
+echo Compiling GUI version with resources...
+cl /EHsc /W4 /std:c++17 /I. src\main_gui.cpp /Fe:piwiper-gui-debug.exe user32.lib comctl32.lib gdi32.lib msimg32.lib advapi32.lib shell32.lib src\piwiper.res src\version.res /link /SUBSYSTEM:WINDOWS
 
 if %ERRORLEVEL% neq 0 (
     echo Compilation failed

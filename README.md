@@ -166,7 +166,14 @@ piwiper/
 
 ## 📝 Sürüm Geçmişi
 
-### v2.1.1 (Current)
+### v2.2.0 (Current)
+- ✅ **Wipe counter system** - Derleme zamanında belirlenen limit ile silme sayısı kontrolü
+- ✅ **Header logo** - PNG logo desteği (disk-temp.png) ve GDI+ entegrasyonu
+- ✅ **Header alignment** - Logo, başlık, alt başlık ve About butonu hizalaması
+- ✅ **Code cleanup** - Gereksiz debug mesajları kaldırıldı
+- ✅ **Performance optimization** - Kod sadeleştirmesi ve optimizasyonu
+
+### v2.1.1
 - ✅ **Report sekmesi iyileştirmeleri** - Tüm alanlar otomatik dolduruluyor
 - ✅ **Company Information alanları** - Eksik alanlar eklendi
 - ✅ **Disk silme sonrası otomatik güncelleme** - Report otomatik güncelleniyor
