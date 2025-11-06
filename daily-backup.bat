@@ -88,3 +88,9 @@ echo [%date% %time%] Daily backup process finished. >> "%LOG_FILE%"
 echo. >> "%LOG_FILE%"
 
 endlocal
+
+
+
+
+
+

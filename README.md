@@ -1,6 +1,10 @@
 # PIWIPER - Professional Disk Eraser
 
-Modern, güvenli ve kullanıcı dostu disk silme aracı. Harici/USB diskleri güvenli bir şekilde silmek için tasarlanmıştır.
+Modern, güvenli ve kullanıcı dostu disk silme aracı. Tüm disk türlerini (harici, dahili, USB, SSD, HDD) güvenli bir şekilde silmek için tasarlanmış profesyonel bir veri imha aracıdır.
+
+**PIWIPER**, Windows işletim sistemi için geliştirilmiş, veri güvenliği ve gizliliği odaklı bir disk temizleme yazılımıdır. Özellikle hassas verilerin kalıcı olarak silinmesi gereken durumlarda kullanılmak üzere tasarlanmıştır.
+
+> **English Version:** [README_EN.md](README_EN.md) | **Türkçe Versiyon:** Bu dosya
 
 ## ⚠️ UYARI
 Bu işlem **geri döndürülemez**. Yanlış diski seçmeniz durumunda tüm veriler kalıcı olarak silinir. Devam etmeden önce doğru diski hedeflediğinizden kesinlikle emin olun.
@@ -15,12 +19,22 @@ Bu işlem **geri döndürülemez**. Yanlış diski seçmeniz durumunda tüm veri
 
 ### 💿 Disk Yönetimi
 - **Akıllı OS disk tespiti** - Sistem diskleri otomatik gizlenir
-- **Detaylı disk bilgileri** - Model, seri numarası, boyut, bus tipi
+- **Tüm disk türleri desteklenir** - HDD, SSD, USB, harici, dahili diskler
+- **Detaylı disk bilgileri** - Model, seri numarası, boyut, bus tipi, durum
 - **Real-time disk tarama** ve güncelleme
+- **Disk durumu kontrolü** - Sağlık durumu ve kullanılabilirlik
 
 ### 🔄 Silme Modları
 - **Quick Wipe** - Partition table temizleme (hızlı, ~3 saniye)
 - **Secure Wipe** - Tüm sektörlere sıfır yazma (güvenli, saatler sürebilir)
+
+### 🎯 Kullanım Alanları
+- **Kurumsal veri imha** - Şirket bilgisayarlarının güvenli temizlenmesi
+- **Kişisel veri koruma** - Hassas kişisel verilerin kalıcı silinmesi
+- **Disk yeniden kullanım** - Eski disklerin güvenli temizlenmesi
+- **Veri güvenliği** - GDPR, KVKK gibi veri koruma yönetmeliklerine uyum
+- **Forensic temizlik** - Adli analiz öncesi veri temizleme
+- **Test ortamları** - Geliştirme ve test disklerinin temizlenmesi
 
 ### 📊 İlerleme Takibi
 - **Dual progress bars** - Coarse ve fine progress
@@ -152,7 +166,16 @@ piwiper/
 
 ## 📝 Sürüm Geçmişi
 
-### v2.1.0 (Current)
+### v2.1.1 (Current)
+- ✅ **Report sekmesi iyileştirmeleri** - Tüm alanlar otomatik dolduruluyor
+- ✅ **Company Information alanları** - Eksik alanlar eklendi
+- ✅ **Disk silme sonrası otomatik güncelleme** - Report otomatik güncelleniyor
+- ✅ **Attributes alanı** - Whole Disk Erasure bilgisi eklendi
+- ✅ **Capacity ve Hard Disk Type** - Device Details alanları dolduruluyor
+- ✅ **COMPANY DETAILS kaldırıldı** - Tekrar eden bölüm temizlendi
+- ✅ **Yedek alma scripti düzeltmeleri** - Takılma sorunları giderildi
+
+### v2.1.0
 - ✅ **Comprehensive versioning system** - Full version management
 - ✅ **About dialog** - Version information and features
 - ✅ **Version resources** - Windows file properties

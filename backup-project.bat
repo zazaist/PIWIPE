@@ -28,22 +28,26 @@ xcopy "CMakeLists.txt" "%BACKUP_FOLDER%\" /Y
 xcopy ".gitignore" "%BACKUP_FOLDER%\" /Y
 
 echo [3/5] Copying compiled executables (if exist)...
-if exist "*.exe" xcopy "*.exe" "%BACKUP_FOLDER%\bin\" /Y
 if not exist "%BACKUP_FOLDER%\bin" mkdir "%BACKUP_FOLDER%\bin"
+if exist "*.exe" (
+    for %%f in (*.exe) do (
+        copy "%%f" "%BACKUP_FOLDER%\bin\" /Y >nul 2>&1
+    )
+)
 
 echo [4/5] Creating backup info file...
 echo PIWIPER Project Backup > "%BACKUP_FOLDER%\BACKUP_INFO.txt"
 echo Created: %date% %time% >> "%BACKUP_FOLDER%\BACKUP_INFO.txt"
 echo Source: %~dp0 >> "%BACKUP_FOLDER%\BACKUP_INFO.txt"
 echo Git Status: >> "%BACKUP_FOLDER%\BACKUP_INFO.txt"
-git status --porcelain >> "%BACKUP_FOLDER%\BACKUP_INFO.txt" 2>nul
+git status --porcelain >> "%BACKUP_FOLDER%\BACKUP_INFO.txt" 2>nul || echo Not a git repository >> "%BACKUP_FOLDER%\BACKUP_INFO.txt"
 echo. >> "%BACKUP_FOLDER%\BACKUP_INFO.txt"
 echo Git Last Commit: >> "%BACKUP_FOLDER%\BACKUP_INFO.txt"
-git log -1 --oneline >> "%BACKUP_FOLDER%\BACKUP_INFO.txt" 2>nul
+git log -1 --oneline >> "%BACKUP_FOLDER%\BACKUP_INFO.txt" 2>nul || echo No commits found >> "%BACKUP_FOLDER%\BACKUP_INFO.txt"
 
 echo [5/5] Creating ZIP archive...
 cd "%BACKUP_DIR%"
-powershell -Command "Compress-Archive -Path 'PIWIPER_Backup_%TIMESTAMP%' -DestinationPath 'PIWIPER_Backup_%TIMESTAMP%.zip' -Force"
+powershell -NoProfile -Command "Compress-Archive -Path 'PIWIPER_Backup_%TIMESTAMP%' -DestinationPath 'PIWIPER_Backup_%TIMESTAMP%.zip' -Force" 2>nul
 cd "%~dp0"
 
 echo.
@@ -55,9 +59,16 @@ echo Backup Location: %BACKUP_FOLDER%
 echo ZIP Archive: %BACKUP_DIR%\PIWIPER_Backup_%TIMESTAMP%.zip
 echo.
 echo Files backed up:
-dir "%BACKUP_FOLDER%" /B
+dir "%BACKUP_FOLDER%" /B 2>nul
 echo.
 echo Total backup size:
-powershell -Command "Get-ChildItem '%BACKUP_FOLDER%' -Recurse | Measure-Object -Property Length -Sum | Select-Object @{Name='Size(MB)';Expression={[math]::Round($_.Sum/1MB,2)}}"
+powershell -NoProfile -Command "$size = (Get-ChildItem '%BACKUP_FOLDER%' -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum; Write-Host ([math]::Round($size/1MB,2)) 'MB'" 2>nul
 echo.
-pause
+echo Backup completed! Press any key to continue...
+timeout /t 2 >nul
+
+
+
+
+
+

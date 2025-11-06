@@ -1,0 +1,46 @@
+                    PIWIPER ERASE CERTIFICATE
+                   Professional Disk Eraser
+Date: [DATE]
+Time: [TIME]
+
+COMPANY INFORMATION
+Licensed to: [COMPANY_NAME]
+Business Name: [COMPANY_NAME]
+Business Location: [POSITION]
+
+ISSUING CERTIFICATE
+Company Name: PIWIPER Professional Disk Eraser
+Technician Name: [TECHNICAL_PERSON]
+Company Location: Professional Data Erasure Services
+Company Phone: [PHONE]
+Company Email: [EMAIL]
+
+DISK ERASE
+Attributes:
+Erase Method: [ERASURE_METHOD]
+Verification: [VERIFICATION_STATUS]
+Process Integrity: Uninterrupted erase
+
+DEVICE DETAILS
+Name: [DISK_MODEL]
+Manufacturer: [DISK_MODEL]
+Model: [DISK_MODEL]
+Serial Number: [DISK_SERIAL]
+Capacity: N/A
+Hard Disk Type: N/A
+
+RESULTS
+Erase Range: Whole Disk
+Name: [DISK_MODEL]
+Started at: [DATE] [TIME]
+Duration: N/A
+Errors: No Errors
+Result: Erased
+Status: Success
+
+I hereby state that data erasure has been carried out in
+accordance with the instructions given by software provider.
+
+Erased by PIWIPER Professional Disk Eraser
+PIWIPER Professional Data Erasure Services
+

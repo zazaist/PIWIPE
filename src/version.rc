@@ -2,8 +2,8 @@
 #include "version.h"
 #include "piwiper_resource.h"
 
-// Icon Resource
-IDI_MAINICON ICON "piwiper_new.ico"
+// Icon Resource (disabled due to format issues)
+// IDI_MAINICON ICON "piwiper.ico"
 
 // Version Information Resource
 VS_VERSION_INFO VERSIONINFO

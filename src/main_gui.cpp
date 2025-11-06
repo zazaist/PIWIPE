@@ -9,8 +9,17 @@
 #include <filesystem>
 #include <cstdio>
 #include <set>
+#include <richedit.h>
 #include "version.h"
 #include "piwiper_resource.h"
+
+// RichEdit constants
+#ifndef EM_SETTEXTMODE
+#define EM_SETTEXTMODE 0x0444
+#endif
+#ifndef TM_PLAINTEXT
+#define TM_PLAINTEXT 0x0001
+#endif
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "user32.lib")
@@ -37,6 +46,7 @@ struct WipeReport {
     std::string serial;
     std::string busType;
     double sizeGB;
+    std::string method;
     std::string notes;
     std::string filename;
 };
@@ -44,6 +54,25 @@ struct WipeReport {
 // Global variables
 HINSTANCE g_hInstance;
 HWND g_hWnd;
+bool g_aboutDialogOpen = false;
+int g_activeTab = 1028; // Track active tab (ID_TAB_ERASURE)
+
+// Form data structure
+struct FormData {
+    std::string companyName;
+    std::string technicalPerson;
+    std::string position;
+    std::string phone;
+    std::string email;
+    std::string address;
+    std::string issuingCompanyName;
+    std::string issuingTechnicianName;
+    std::string issuingLocation;
+    std::string issuingPhone;
+    std::string issuingEmail;
+};
+
+FormData g_formData;
 HWND g_hTabControl;
 HWND g_hListView;
 HWND g_hProgressBar;
@@ -59,6 +88,7 @@ HFONT g_hNormalFont;
 HWND g_hBtnRefresh;
 HWND g_hBtnWipe;
 HWND g_hBtnCancel;
+HWND g_hBtnExit;
 HWND g_hStatusText;
 HWND g_hEtaText;
 HWND g_hMethodCombo;
@@ -71,7 +101,7 @@ std::vector<DiskInfo> g_disks;
 std::vector<WipeReport> g_reports;
 bool g_isWiping = false;
 bool g_showAll = false;
-bool g_quickWipe = true; // Default to quick wipe
+bool g_quickWipe = true; // Default to quick wipe for convenience
 bool g_cancelRequested = false;
 HANDLE g_wipeProcessHandle = NULL;
 int g_verificationMode = 0; // 0=None, 1=Quick, 2=Full
@@ -91,10 +121,503 @@ int g_verificationMode = 0; // 0=None, 1=Quick, 2=Full
 #define ID_METHOD_COMBO 1014
 #define ID_VERIFICATION_COMBO 1015
 #define ID_CUSTOMER_NAME_INPUT 1021
-#define ID_CUSTOMER_ADDRESS_INPUT 1022
-#define ID_CUSTOMER_PHONE_INPUT 1023
-#define ID_CUSTOMER_EMAIL_INPUT 1024
+#define ID_TECHNICAL_PERSON_INPUT 1022
+#define ID_POSITION_INPUT 1023
+#define ID_PHONE_INPUT 1024
+#define ID_EMAIL_INPUT 1042
+#define ID_ADDRESS_LABEL 1043
+#define ID_ADDRESS_INPUT 1044
+#define ID_ISSUING_CERT_LABEL 1045
+#define ID_COMPANY_DETAILS_LABEL 1046
+#define ID_ISSUING_COMPANY_LABEL 1047
+#define ID_ISSUING_COMPANY_INPUT 1048
+#define ID_ISSUING_TECHNICIAN_LABEL 1049
+#define ID_ISSUING_TECHNICIAN_INPUT 1050
+#define ID_ISSUING_LOCATION_LABEL 1051
+#define ID_ISSUING_LOCATION_INPUT 1052
+#define ID_ISSUING_PHONE_LABEL 1053
+#define ID_ISSUING_PHONE_INPUT 1054
+#define ID_ISSUING_EMAIL_LABEL 1055
+#define ID_ISSUING_EMAIL_INPUT 1056
 #define ID_ABOUT_DIALOG 1027
+#define ID_TAB_ERASURE 1028
+#define ID_TAB_DETAILS 1029
+#define ID_TAB_REPORT 1030
+#define ID_ADVANCED_OPTIONS_LABEL 1031
+#define ID_ERASURE_METHOD_LABEL 1032
+#define ID_VERIFICATION_LABEL 1033
+#define ID_PROGRESS_LABEL 1034
+#define ID_FINE_LABEL 1035
+#define ID_FORM_TITLE_LABEL 1036
+#define ID_COMPANY_NAME_LABEL 1037
+#define ID_TECHNICAL_PERSON_LABEL 1038
+#define ID_POSITION_LABEL 1039
+#define ID_PHONE_LABEL 1040
+#define ID_EMAIL_LABEL 1041
+#define ID_SAVE_FORM_BUTTON 1057
+#define ID_REPORT_TITLE_LABEL 1058
+#define ID_DISK_MODEL_LABEL 1059
+#define ID_DISK_SERIAL_LABEL 1060
+#define ID_DISK_SIZE_LABEL 1061
+#define ID_ERASURE_METHOD_LABEL2 1062
+#define ID_ERASURE_DATE_LABEL 1063
+#define ID_ERASURE_TIME_LABEL 1064
+#define ID_ERASURE_DURATION_LABEL 1065
+#define ID_VERIFICATION_STATUS_LABEL 1066
+#define ID_COMPANY_NAME_LABEL2 1067
+#define ID_TECHNICAL_PERSON_LABEL2 1068
+#define ID_POSITION_LABEL2 1069
+#define ID_PHONE_LABEL2 1070
+#define ID_EMAIL_LABEL2 1071
+#define ID_PREVIEW_BUTTON 1072
+#define ID_EXPORT_PDF_BUTTON 1073
+#define ID_PREVIEW_DIALOG 1074
+#define ID_REPORT_PREVIEW_AREA 1075
+
+// Report data structure
+struct ReportData {
+    std::string diskModel;
+    std::string diskSerial;
+    std::string diskSize;
+    std::string busType;
+    std::string erasureMethod;
+    std::string erasureDate;
+    std::string erasureTime;
+    std::string erasureDuration;
+    std::string verificationStatus;
+    std::string companyName;
+    std::string technicalPerson;
+    std::string position;
+    std::string phone;
+    std::string email;
+    std::string address;
+};
+
+ReportData g_reportData;
+
+// Report data save/load functions
+// Forward declarations
+void UpdateReportFields();
+void UpdateReportPreview();
+
+void SaveReportData() {
+    std::ofstream file("report_data.txt");
+    if (file.is_open()) {
+        file << g_reportData.diskModel << std::endl;
+        file << g_reportData.diskSerial << std::endl;
+        file << g_reportData.diskSize << std::endl;
+        file << g_reportData.busType << std::endl;
+        file << g_reportData.erasureMethod << std::endl;
+        file << g_reportData.erasureDate << std::endl;
+        file << g_reportData.erasureTime << std::endl;
+        file << g_reportData.erasureDuration << std::endl;
+        file << g_reportData.verificationStatus << std::endl;
+        file << g_reportData.companyName << std::endl;
+        file << g_reportData.technicalPerson << std::endl;
+        file << g_reportData.position << std::endl;
+        file << g_reportData.phone << std::endl;
+        file << g_reportData.email << std::endl;
+        file.close();
+    } else {
+    }
+}
+
+void LoadReportData() {
+    std::ifstream file("report_data.txt");
+    if (file.is_open()) {
+        std::getline(file, g_reportData.diskModel);
+        std::getline(file, g_reportData.diskSerial);
+        std::getline(file, g_reportData.diskSize);
+        std::getline(file, g_reportData.busType);
+        std::getline(file, g_reportData.erasureMethod);
+        std::getline(file, g_reportData.erasureDate);
+        std::getline(file, g_reportData.erasureTime);
+        std::getline(file, g_reportData.erasureDuration);
+        std::getline(file, g_reportData.verificationStatus);
+        std::getline(file, g_reportData.companyName);
+        std::getline(file, g_reportData.technicalPerson);
+        std::getline(file, g_reportData.position);
+        std::getline(file, g_reportData.phone);
+        std::getline(file, g_reportData.email);
+        file.close();
+    } else {
+    }
+}
+
+// Form data save/load functions
+void SaveFormData(bool showMessage = false) {
+    std::ofstream file("form_data.txt");
+    if (file.is_open()) {
+        file << g_formData.companyName << std::endl;
+        file << g_formData.technicalPerson << std::endl;
+        file << g_formData.position << std::endl;
+        file << g_formData.phone << std::endl;
+        file << g_formData.email << std::endl;
+        file << g_formData.address << std::endl;
+        file << g_formData.issuingCompanyName << std::endl;
+        file << g_formData.issuingTechnicianName << std::endl;
+        file << g_formData.issuingLocation << std::endl;
+        file << g_formData.issuingPhone << std::endl;
+        file << g_formData.issuingEmail << std::endl;
+        file.close();
+        // Update report fields and preview with new form data
+        UpdateReportFields();
+        UpdateReportPreview();
+        
+        if (showMessage) {
+            MessageBoxA(g_hWnd, "Form data saved successfully!", "Save Complete", MB_OK | MB_ICONINFORMATION);
+        }
+    } else {
+        if (showMessage) {
+            MessageBoxA(g_hWnd, "ERROR: Could not save form data!", "Save Error", MB_OK | MB_ICONERROR);
+        }
+    }
+}
+
+void LoadFormData() {
+    std::ifstream file("form_data.txt");
+    if (file.is_open()) {
+        std::getline(file, g_formData.companyName);
+        std::getline(file, g_formData.technicalPerson);
+        std::getline(file, g_formData.position);
+        std::getline(file, g_formData.phone);
+        std::getline(file, g_formData.email);
+        std::getline(file, g_formData.address);
+        // Try to load Issuing Certificate fields (for backward compatibility)
+        std::string line;
+        if (std::getline(file, line)) {
+            g_formData.issuingCompanyName = line;
+            if (std::getline(file, line)) {
+                g_formData.issuingTechnicianName = line;
+                if (std::getline(file, line)) {
+                    g_formData.issuingLocation = line;
+                    if (std::getline(file, line)) {
+                        g_formData.issuingPhone = line;
+                        if (std::getline(file, line)) {
+                            g_formData.issuingEmail = line;
+                        } else {
+                            g_formData.issuingEmail = "";
+                        }
+                    } else {
+                        g_formData.issuingPhone = "";
+                        g_formData.issuingEmail = "";
+                    }
+                } else {
+                    g_formData.issuingLocation = "";
+                    g_formData.issuingPhone = "";
+                    g_formData.issuingEmail = "";
+                }
+            } else {
+                // Old format: only company, location, phone
+                g_formData.issuingTechnicianName = "";
+                g_formData.issuingLocation = line;
+                if (std::getline(file, line)) {
+                    g_formData.issuingPhone = line;
+                    g_formData.issuingEmail = "";
+                } else {
+                    g_formData.issuingLocation = "";
+                    g_formData.issuingPhone = "";
+                    g_formData.issuingEmail = "";
+                }
+            }
+        } else {
+            // Default values if not found (backward compatibility)
+            g_formData.issuingCompanyName = "";
+            g_formData.issuingTechnicianName = "";
+            g_formData.issuingLocation = "";
+            g_formData.issuingPhone = "";
+            g_formData.issuingEmail = "";
+        }
+        file.close();
+        
+        // Check if any field is empty, if so fill with example data
+        bool isEmpty = g_formData.companyName.empty() || 
+                      g_formData.technicalPerson.empty() || 
+                      g_formData.position.empty() || 
+                      g_formData.phone.empty() || 
+                      g_formData.email.empty() || 
+                      g_formData.address.empty();
+        
+        if (isEmpty) {
+            g_formData.companyName = "Example Company Ltd.";
+            g_formData.technicalPerson = "John Smith";
+            g_formData.position = "Senior Technician";
+            g_formData.phone = "+1-555-0123";
+            g_formData.email = "john.smith@example.com";
+            g_formData.address = "123 Business Street, Suite 100, New York, NY 10001";
+            g_formData.issuingCompanyName = "";
+            g_formData.issuingTechnicianName = "";
+            g_formData.issuingLocation = "";
+            g_formData.issuingPhone = "";
+            g_formData.issuingEmail = "";
+            // Save the example data
+            SaveFormData(false);
+        } else {
+        }
+    } else {
+        g_formData.companyName = "Example Company Ltd.";
+        g_formData.technicalPerson = "John Smith";
+        g_formData.position = "Senior Technician";
+        g_formData.phone = "+1-555-0123";
+        g_formData.email = "john.smith@example.com";
+        g_formData.address = "";
+        g_formData.issuingCompanyName = "";
+        g_formData.issuingTechnicianName = "";
+        g_formData.issuingLocation = "";
+        g_formData.issuingPhone = "";
+        g_formData.issuingEmail = "";
+        // Save the example data
+        SaveFormData(false);
+    }
+}
+
+void UpdateFormFields() {
+    HWND hCompany = GetDlgItem(g_hWnd, ID_CUSTOMER_NAME_INPUT);
+    if (hCompany) {
+        SetWindowTextA(hCompany, g_formData.companyName.c_str());
+    }
+    
+    HWND hTechnical = GetDlgItem(g_hWnd, ID_TECHNICAL_PERSON_INPUT);
+    if (hTechnical) {
+        SetWindowTextA(hTechnical, g_formData.technicalPerson.c_str());
+    }
+    
+    HWND hPosition = GetDlgItem(g_hWnd, ID_POSITION_INPUT);
+    if (hPosition) {
+        SetWindowTextA(hPosition, g_formData.position.c_str());
+    }
+    
+    HWND hPhone = GetDlgItem(g_hWnd, ID_PHONE_INPUT);
+    if (hPhone) {
+        SetWindowTextA(hPhone, g_formData.phone.c_str());
+    }
+    
+    HWND hEmail = GetDlgItem(g_hWnd, ID_EMAIL_INPUT);
+    if (hEmail) {
+        SetWindowTextA(hEmail, g_formData.email.c_str());
+    }
+    
+    HWND hAddress = GetDlgItem(g_hWnd, ID_ADDRESS_INPUT);
+    if (hAddress) {
+        SetWindowTextA(hAddress, g_formData.address.c_str());
+    }
+    
+    // Update Issuing Certificate fields
+    HWND hIssuingCompany = GetDlgItem(g_hWnd, ID_ISSUING_COMPANY_INPUT);
+    if (hIssuingCompany) {
+        SetWindowTextA(hIssuingCompany, g_formData.issuingCompanyName.c_str());
+    }
+    
+    HWND hIssuingTechnician = GetDlgItem(g_hWnd, ID_ISSUING_TECHNICIAN_INPUT);
+    if (hIssuingTechnician) {
+        SetWindowTextA(hIssuingTechnician, g_formData.issuingTechnicianName.c_str());
+    }
+    
+    HWND hIssuingLocation = GetDlgItem(g_hWnd, ID_ISSUING_LOCATION_INPUT);
+    if (hIssuingLocation) {
+        SetWindowTextA(hIssuingLocation, g_formData.issuingLocation.c_str());
+    }
+    
+    HWND hIssuingPhone = GetDlgItem(g_hWnd, ID_ISSUING_PHONE_INPUT);
+    if (hIssuingPhone) {
+        SetWindowTextA(hIssuingPhone, g_formData.issuingPhone.c_str());
+    }
+    
+    HWND hIssuingEmail = GetDlgItem(g_hWnd, ID_ISSUING_EMAIL_INPUT);
+    if (hIssuingEmail) {
+        SetWindowTextA(hIssuingEmail, g_formData.issuingEmail.c_str());
+    }
+}
+
+void UpdateReportFields() {
+    // Update report data with form data
+    g_reportData.companyName = g_formData.companyName;
+    g_reportData.technicalPerson = g_formData.technicalPerson;
+    g_reportData.position = g_formData.position;
+    g_reportData.phone = g_formData.phone;
+    g_reportData.email = g_formData.email;
+    g_reportData.address = g_formData.address;
+    
+    // Note: Static labels removed - only preview area is used now
+    // All report data is displayed in the preview area via UpdateReportPreview()
+}
+
+// Preview Report Dialog Procedure
+INT_PTR CALLBACK PreviewDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+        case WM_INITDIALOG: {
+            // Set report content
+            SetDlgItemTextA(hDlg, 1001, g_reportData.erasureDate.c_str());
+            SetDlgItemTextA(hDlg, 1002, "1.0.0.0");
+            SetDlgItemTextA(hDlg, 1003, "");
+            SetDlgItemTextA(hDlg, 1004, g_reportData.companyName.c_str());
+            SetDlgItemTextA(hDlg, 1005, "________________");
+            SetDlgItemTextA(hDlg, 1006, "Desktop");
+            SetDlgItemTextA(hDlg, 1007, "9 Hub");
+            SetDlgItemTextA(hDlg, 1008, "5 Device");
+            SetDlgItemTextA(hDlg, 1009, g_reportData.diskModel.c_str());
+            SetDlgItemTextA(hDlg, 1010, g_reportData.diskSerial.c_str());
+            SetDlgItemTextA(hDlg, 1011, g_reportData.diskSize.c_str());
+            SetDlgItemTextA(hDlg, 1012, g_reportData.erasureMethod.c_str());
+            SetDlgItemTextA(hDlg, 1013, g_reportData.verificationStatus.c_str());
+            return TRUE;
+        }
+        case WM_COMMAND:
+            if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL) {
+                EndDialog(hDlg, LOWORD(wParam));
+                return TRUE;
+            }
+            break;
+    }
+    return FALSE;
+}
+
+void ShowPreviewDialog() {
+    // Show a simple message box with report information for now
+    std::string reportText = "PIWIPER Report Preview\n\n";
+    reportText += "Report Date: " + g_reportData.erasureDate + "\n";
+    reportText += "Software Version: 1.0.0.0\n\n";
+    reportText += "Customer Details:\n";
+    reportText += "Company Name: " + g_reportData.companyName + "\n";
+    reportText += "Technical Person: " + g_reportData.technicalPerson + "\n";
+    reportText += "Position: " + g_reportData.position + "\n";
+    reportText += "Phone: " + g_reportData.phone + "\n";
+    reportText += "Email: " + g_reportData.email + "\n\n";
+    reportText += "Hardware Information:\n";
+    reportText += "Disk Model: " + g_reportData.diskModel + "\n";
+    reportText += "Disk Serial: " + g_reportData.diskSerial + "\n";
+    reportText += "Erasure Method: " + g_reportData.erasureMethod + "\n";
+    reportText += "Verification: " + g_reportData.verificationStatus + "\n";
+    
+    MessageBoxA(g_hWnd, reportText.c_str(), "Report Preview", MB_OK | MB_ICONINFORMATION);
+}
+
+void UpdateReportPreview() {
+    // Update the preview area with report content - Plain text format for EDIT control
+    std::string reportText = "";
+    
+    // Header - Certificate Style
+    reportText += "                    PIWIPER ERASE CERTIFICATE\n";
+    reportText += "                   Professional Disk Eraser\n\n";
+    
+    // Get current date and time
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char dateStr[32], timeStr[32];
+    sprintf_s(dateStr, "%02d/%02d/%04d", st.wDay, st.wMonth, st.wYear);
+    sprintf_s(timeStr, "%02d:%02d:%02d", st.wHour, st.wMinute, st.wSecond);
+    
+    reportText += "Date: " + std::string(dateStr) + "\n";
+    reportText += "Time: " + std::string(timeStr) + "\n\n";
+    
+    // Company Information
+    reportText += "COMPANY INFORMATION\n";
+    reportText += "Licensed to: " + g_reportData.companyName + "\n";
+    reportText += "Company Name: " + g_reportData.companyName + "\n";
+    reportText += "Technician Name: " + g_reportData.technicalPerson + "\n";
+    reportText += "Position: " + g_reportData.position + "\n";
+    reportText += "Phone: " + g_reportData.phone + "\n";
+    reportText += "Email: " + g_reportData.email + "\n";
+    reportText += "Address: " + g_reportData.address + "\n\n";
+    
+    // Issuing Certificate - Use form data if available, otherwise use defaults
+    reportText += "ISSUING CERTIFICATE\n";
+    std::string issuingCompany = g_formData.issuingCompanyName.empty() ? "PIWIPER Professional Disk Eraser" : g_formData.issuingCompanyName;
+    std::string issuingTechnician = g_formData.issuingTechnicianName.empty() ? g_reportData.technicalPerson : g_formData.issuingTechnicianName;
+    std::string issuingLocation = g_formData.issuingLocation.empty() ? "Professional Data Erasure Services" : g_formData.issuingLocation;
+    std::string issuingPhone = g_formData.issuingPhone.empty() ? g_reportData.phone : g_formData.issuingPhone;
+    std::string issuingEmail = g_formData.issuingEmail.empty() ? g_reportData.email : g_formData.issuingEmail;
+    reportText += "Company Name: " + issuingCompany + "\n";
+    reportText += "Technician Name: " + issuingTechnician + "\n";
+    reportText += "Company Location: " + issuingLocation + "\n";
+    reportText += "Company Phone: " + issuingPhone + "\n";
+    reportText += "Company Email: " + issuingEmail + "\n\n";
+    
+    // Disk Erase Attributes
+    reportText += "DISK ERASE\n";
+    reportText += "Attributes: Whole Disk Erasure\n";
+    reportText += "Erase Method: " + (g_reportData.erasureMethod.empty() ? "" : g_reportData.erasureMethod) + "\n";
+    reportText += "Verification: " + (g_reportData.verificationStatus.empty() ? "" : g_reportData.verificationStatus) + "\n";
+    reportText += "Process Integrity: Uninterrupted erase\n\n";
+    
+    // Device Details
+    reportText += "DEVICE DETAILS\n";
+    reportText += "Name: " + (g_reportData.diskModel.empty() ? "" : g_reportData.diskModel) + "\n";
+    reportText += "Manufacturer: " + (g_reportData.diskModel.empty() ? "" : g_reportData.diskModel) + "\n";
+    reportText += "Model: " + (g_reportData.diskModel.empty() ? "" : g_reportData.diskModel) + "\n";
+    reportText += "Serial Number: " + (g_reportData.diskSerial.empty() ? "" : g_reportData.diskSerial) + "\n";
+    reportText += "Capacity: " + (g_reportData.diskSize.empty() ? "N/A" : g_reportData.diskSize) + "\n";
+    reportText += "Hard Disk Type: " + (g_reportData.busType.empty() ? "N/A" : g_reportData.busType) + "\n\n";
+    
+    // Results
+    reportText += "RESULTS\n";
+    reportText += "Erase Range: ";
+    if (!g_reportData.diskModel.empty()) reportText += "Whole Disk";
+    reportText += "\n";
+    reportText += "Name: " + (g_reportData.diskModel.empty() ? "" : g_reportData.diskModel) + "\n";
+    reportText += "Started at: " + (g_reportData.erasureDate.empty() ? "" : g_reportData.erasureDate) + " " + (g_reportData.erasureTime.empty() ? "" : g_reportData.erasureTime) + "\n";
+    reportText += "Duration: " + (g_reportData.erasureDuration.empty() ? "" : g_reportData.erasureDuration) + "\n";
+    reportText += "Errors: ";
+    if (!g_reportData.diskModel.empty()) reportText += "No Errors";
+    reportText += "\n";
+    reportText += "Result: ";
+    if (!g_reportData.diskModel.empty()) reportText += "Erased";
+    reportText += "\n";
+    reportText += "Status: ";
+    if (!g_reportData.diskModel.empty()) reportText += "Success";
+    reportText += "\n\n";
+    
+    // Footer
+    reportText += "I hereby state that data erasure has been carried out in\n";
+    reportText += "accordance with the instructions given by software provider.\n\n";
+    reportText += "Erased by PIWIPER Professional Disk Eraser\n";
+    reportText += "PIWIPER Professional Data Erasure Services\n";
+    
+    // Set the plain text content using SetWindowTextA
+    HWND hPreview = GetDlgItem(g_hWnd, ID_REPORT_PREVIEW_AREA);
+    if (hPreview) {
+        SetWindowTextA(hPreview, reportText.c_str());
+    }
+}
+
+void GetFormDataFromFields() {
+    char buffer[256];
+    
+    GetWindowTextA(GetDlgItem(g_hWnd, ID_CUSTOMER_NAME_INPUT), buffer, sizeof(buffer));
+    g_formData.companyName = buffer;
+    
+    GetWindowTextA(GetDlgItem(g_hWnd, ID_TECHNICAL_PERSON_INPUT), buffer, sizeof(buffer));
+    g_formData.technicalPerson = buffer;
+    
+    GetWindowTextA(GetDlgItem(g_hWnd, ID_POSITION_INPUT), buffer, sizeof(buffer));
+    g_formData.position = buffer;
+    
+    GetWindowTextA(GetDlgItem(g_hWnd, ID_PHONE_INPUT), buffer, sizeof(buffer));
+    g_formData.phone = buffer;
+    
+    GetWindowTextA(GetDlgItem(g_hWnd, ID_EMAIL_INPUT), buffer, sizeof(buffer));
+    g_formData.email = buffer;
+    
+    GetWindowTextA(GetDlgItem(g_hWnd, ID_ADDRESS_INPUT), buffer, sizeof(buffer));
+    g_formData.address = buffer;
+    
+    // Get Issuing Certificate fields
+    GetWindowTextA(GetDlgItem(g_hWnd, ID_ISSUING_COMPANY_INPUT), buffer, sizeof(buffer));
+    g_formData.issuingCompanyName = buffer;
+    
+    GetWindowTextA(GetDlgItem(g_hWnd, ID_ISSUING_TECHNICIAN_INPUT), buffer, sizeof(buffer));
+    g_formData.issuingTechnicianName = buffer;
+    
+    GetWindowTextA(GetDlgItem(g_hWnd, ID_ISSUING_LOCATION_INPUT), buffer, sizeof(buffer));
+    g_formData.issuingLocation = buffer;
+    
+    GetWindowTextA(GetDlgItem(g_hWnd, ID_ISSUING_PHONE_INPUT), buffer, sizeof(buffer));
+    g_formData.issuingPhone = buffer;
+    
+    GetWindowTextA(GetDlgItem(g_hWnd, ID_ISSUING_EMAIL_INPUT), buffer, sizeof(buffer));
+    g_formData.issuingEmail = buffer;
+}
+
 
 // Helper: run command and capture output
 static std::string runCmd(const std::string& cmd) {
@@ -242,7 +765,6 @@ static std::vector<DiskInfo> listDisks() {
                     try {
                         int diskIdx = std::stoi(numStr);
                         osDiskIndexes.insert(diskIdx);
-                        OutputDebugStringA(("[PIWIPER] C: drive is on Disk #" + std::to_string(diskIdx)).c_str());
         } catch (...) {}
                 }
             }
@@ -275,10 +797,7 @@ static std::vector<DiskInfo> listDisks() {
 
 // Log to edit control
 void LogMessage(const std::string& msg) {
-    // Output to DebugView
-    OutputDebugStringA(("[PIWIPER] " + msg).c_str());
-    
-    // Also append to status log if available
+    // Append to status log if available
     if (g_hStatusText) {
         auto now = std::chrono::system_clock::now();
         auto time_t = std::chrono::system_clock::to_time_t(now);
@@ -454,6 +973,7 @@ DWORD WINAPI WipeThread(LPVOID param) {
     
     std::string notes = "";
     bool success = false;
+    auto start = std::chrono::steady_clock::now(); // Track start time for duration calculation
     
     LogMessage(g_quickWipe ? "Using QUICK wipe mode" : "Using SECURE wipe mode");
     
@@ -475,7 +995,6 @@ DWORD WINAPI WipeThread(LPVOID param) {
         g_wipeProcessHandle = NULL;
     } else {
         DWORD bytesReturned;
-        auto start = std::chrono::steady_clock::now();
         
         if (g_quickWipe) {
             // QUICK WIPE: Just clear partition table
@@ -550,7 +1069,6 @@ DWORD WINAPI WipeThread(LPVOID param) {
                 
                 // Log start of write
                 LogMessage("Starting to write zeros to disk...");
-                OutputDebugStringA("[PIWIPER] Write loop starting");
                 
                 while (bytesWritten < totalBytes && !g_cancelRequested) {
                     DWORD toWrite = (DWORD)((totalBytes - bytesWritten) > chunkSize ? chunkSize : (totalBytes - bytesWritten));
@@ -559,19 +1077,12 @@ DWORD WINAPI WipeThread(LPVOID param) {
                         DWORD err = GetLastError();
                         notes = "Write failed at " + std::to_string(bytesWritten / (1024*1024)) + " MB. Error: " + std::to_string(err);
                         LogMessage("ERROR: " + notes);
-                        OutputDebugStringA(("[PIWIPER] WriteFile failed, error: " + std::to_string(err)).c_str());
                 success = false;
                 break;
             }
             
                     bytesWritten += written;
                     
-                    // Debug first few writes
-                    static int writeCount = 0;
-                    if (writeCount < 5) {
-                        OutputDebugStringA(("[PIWIPER] Wrote " + std::to_string(written) + " bytes, total: " + std::to_string(bytesWritten)).c_str());
-                        writeCount++;
-                    }
                     
                     // Update fine progress bar every 1MB
                     if (bytesWritten - lastUpdate >= (1024 * 1024) || bytesWritten >= totalBytes) {
@@ -605,12 +1116,6 @@ DWORD WINAPI WipeThread(LPVOID param) {
                         // Send both coarse progress (wParam) and fine progress via custom message
                         PostMessage(g_hWnd, WM_UPDATE_PROGRESS, MAKEWPARAM(progressPct, fineProgressPct), progressData);
                         
-                        // Debug for first few updates
-                        static int updateCountDebug = 0;
-                        if (updateCountDebug < 10) {
-                            OutputDebugStringA(("[PIWIPER] Update #" + std::to_string(updateCountDebug) + ": Progress=" + std::to_string(progressPct) + "%, Fine=" + std::to_string(fineProgressPct) + "%, Avg Speed=" + std::to_string(avgSpeedMBps) + " MB/s").c_str());
-                            updateCountDebug++;
-                        }
                         
                         lastUpdate = bytesWritten;
                         lastUpdateTime = now;
@@ -739,6 +1244,55 @@ DWORD WINAPI WipeThread(LPVOID param) {
     
     writeReport(disk, success ? "SUCCESS" : "FAILED", notes);
     
+    // Update g_reportData for report preview
+    auto end = std::chrono::steady_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::seconds>(end - start);
+    
+    g_reportData.diskModel = wp->model;
+    g_reportData.diskSerial = wp->serial;
+    char sizeBuf[64];
+    sprintf_s(sizeBuf, "%.2f GB", wp->sizeGB);
+    g_reportData.diskSize = sizeBuf;
+    g_reportData.busType = wp->busType;
+    
+    // Erasure method
+    if (g_quickWipe) {
+        g_reportData.erasureMethod = "Quick Wipe (Partition Table Removal)";
+    } else {
+        g_reportData.erasureMethod = "Secure Wipe (Zero All Sectors)";
+    }
+    
+    // Verification status
+    if (g_verificationMode == 0) {
+        g_reportData.verificationStatus = "None";
+    } else if (g_verificationMode == 1) {
+        g_reportData.verificationStatus = "Quick Verification";
+    } else {
+        g_reportData.verificationStatus = "Full Verification";
+    }
+    
+    // Date and time
+    auto now = std::chrono::system_clock::now();
+    auto time_t = std::chrono::system_clock::to_time_t(now);
+    struct tm timeinfo;
+    localtime_s(&timeinfo, &time_t);
+    char dateBuf[64], timeBuf[64];
+    strftime(dateBuf, sizeof(dateBuf), "%Y-%m-%d", &timeinfo);
+    strftime(timeBuf, sizeof(timeBuf), "%H:%M:%S", &timeinfo);
+    g_reportData.erasureDate = dateBuf;
+    g_reportData.erasureTime = timeBuf;
+    
+    // Duration
+    int hours = duration.count() / 3600;
+    int minutes = (duration.count() % 3600) / 60;
+    int seconds = duration.count() % 60;
+    if (hours > 0) {
+        sprintf_s(sizeBuf, "%d:%02d:%02d", hours, minutes, seconds);
+    } else {
+        sprintf_s(sizeBuf, "%d:%02d", minutes, seconds);
+    }
+    g_reportData.erasureDuration = sizeBuf;
+    
     delete wp;
     g_wipeProcessHandle = NULL; // Clear handle
     PostMessage(g_hWnd, WM_WIPE_COMPLETE, success ? 1 : 0, 0);
@@ -827,36 +1381,54 @@ void RefreshDiskList() {
 
 // Show About Dialog
 void ShowAboutDialog() {
+    // Prevent multiple instances of About dialog
+    if (g_aboutDialogOpen) {
+        return;
+    }
+    
+    g_aboutDialogOpen = true;
+    
     std::string aboutText = "PIWIPER - Professional Disk Eraser\n\n";
     aboutText += "Version: " + std::string(PIWIPER_VERSION_STRING) + "\n";
     aboutText += "Build Date: " + std::string(PIWIPER_BUILD_DATE) + " " + std::string(PIWIPER_BUILD_TIME) + "\n";
     aboutText += "Build Config: " + std::string(PIWIPER_BUILD_CONFIG) + "\n\n";
-    aboutText += PIWIPER_APP_DESCRIPTION + "\n\n";
+    aboutText += std::string(PIWIPER_APP_DESCRIPTION) + "\n\n";
     aboutText += "Features:\n";
-    aboutText += "• Modern UI with gradient design\n";
-    aboutText += "• Dual progress tracking\n";
-    aboutText += "• Real-time speed display\n";
-    aboutText += "• Verification system\n";
-    aboutText += "• Comprehensive backup system\n";
-    aboutText += "• OS disk protection\n\n";
-    aboutText += PIWIPER_APP_COPYRIGHT + "\n";
+    aboutText += "- Modern UI with gradient design\n";
+    aboutText += "- Dual progress tracking\n";
+    aboutText += "- Real-time speed display\n";
+    aboutText += "- Verification system\n";
+    aboutText += "- Comprehensive backup system\n";
+    aboutText += "- OS disk protection\n\n";
+    aboutText += std::string(PIWIPER_APP_COPYRIGHT) + "\n";
     aboutText += "All rights reserved.\n\n";
-    aboutText += "⚠️ WARNING: This tool permanently destroys data!\n";
+    aboutText += "WARNING: This tool permanently destroys data!\n";
     aboutText += "Use with extreme caution and proper authorization.";
     
-    MessageBoxA(g_hWnd, aboutText.c_str(), "About PIWIPER", MB_OK | MB_ICONINFORMATION);
+    MessageBox(g_hWnd, aboutText.c_str(), "About PIWIPER", MB_OK | MB_ICONINFORMATION);
+    
+    g_aboutDialogOpen = false;
 }
 
 // Wipe selected disk
 void WipeSelectedDisk() {
+    static bool isProcessing = false;
+    
+    if (isProcessing) {
+        return; // Prevent double calls
+    }
+    
     if (g_isWiping) {
         MessageBoxA(g_hWnd, "A wipe operation is already in progress!", "Busy", MB_OK | MB_ICONWARNING);
         return;
     }
     
+    isProcessing = true;
+    
     int selected = ListView_GetNextItem(g_hListView, -1, LVNI_SELECTED);
     if (selected == -1) {
         MessageBoxA(g_hWnd, "Please select a disk to wipe.", "No Selection", MB_OK | MB_ICONINFORMATION);
+        isProcessing = false;
         return;
     }
     
@@ -872,9 +1444,12 @@ void WipeSelectedDisk() {
         actualIndex++;
     }
     
-    if (!selectedDisk) return;
+    if (!selectedDisk) {
+        isProcessing = false;
+        return;
+    }
     
-    // Confirm
+    // First confirmation
     std::string msg = "WARNING: This will PERMANENTLY DESTROY all data on:\n\n";
     msg += "Disk #" + std::to_string(selectedDisk->number) + "\n";
     msg += "Size: " + std::to_string((int)selectedDisk->sizeGB) + " GB\n";
@@ -885,8 +1460,11 @@ void WipeSelectedDisk() {
     int result = MessageBoxA(g_hWnd, msg.c_str(), "CONFIRM DISK WIPE", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
     if (result != IDYES) {
         LogMessage("Wipe cancelled by user");
+        isProcessing = false;
         return;
     }
+    
+    // No additional confirmation needed - user already selected and confirmed
     
     // Start wipe thread
     g_isWiping = true;
@@ -916,6 +1494,8 @@ void WipeSelectedDisk() {
     wp->busType = selectedDisk->busType;
     
     CreateThread(nullptr, 0, WipeThread, wp, 0, nullptr);
+    
+    isProcessing = false; // Reset flag after starting thread
 }
 
 // Window procedure
@@ -942,7 +1522,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 CLIP_DEFAULT_PRECIS,     // ClipPrecision
                 CLEARTYPE_QUALITY,       // Quality
                 FF_SWISS | VARIABLE_PITCH, // PitchAndFamily (Swiss = Sans-serif)
-                "Segoe UI");             // FaceName
+                "Verdana");              // FaceName
             
             g_hNormalFont = CreateFontA(
                 -15,                      // Height
@@ -958,31 +1538,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 CLIP_DEFAULT_PRECIS,     // ClipPrecision
                 CLEARTYPE_QUALITY,       // Quality
                 FF_SWISS | VARIABLE_PITCH, // PitchAndFamily
-                "Segoe UI");             // FaceName
+                "Verdana");              // FaceName
             
             HFONT hNormalFont = g_hNormalFont;
             
             // Header is drawn in WM_PAINT (no controls needed here)
             
             // Tab control (moved down to account for 90px header)
-            g_hTabControl = CreateWindowExA(0, WC_TABCONTROLA, "", WS_VISIBLE | WS_CHILD | TCS_FIXEDWIDTH,
-                20, 100, 1060, 30, hwnd, (HMENU)ID_TAB_CONTROL, g_hInstance, nullptr);
-            SendMessage(g_hTabControl, WM_SETFONT, (WPARAM)hNormalFont, TRUE);
+            // Tab Control removed - using single page layout
             
-            // Add tabs
-            TCITEMA tci = {};
-            tci.mask = TCIF_TEXT;
-            tci.pszText = const_cast<char*>("Erasure");
-            TabCtrl_InsertItem(g_hTabControl, 0, &tci);
-            tci.pszText = const_cast<char*>("Erasure Details");
-            TabCtrl_InsertItem(g_hTabControl, 1, &tci);
-            tci.pszText = const_cast<char*>("Reports");
-            TabCtrl_InsertItem(g_hTabControl, 2, &tci);
-            
-            // ListView (adjusted for 90px header + 10px gap)
+            // ListView
+            // ListView for disk selection (moved down for tabs)
             g_hListView = CreateWindowExA(WS_EX_CLIENTEDGE, WC_LISTVIEWA, "", 
                 WS_VISIBLE | WS_CHILD | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
-                20, 140, 1060, 200, hwnd, (HMENU)ID_LISTVIEW, g_hInstance, nullptr);
+                20, 130, 1060, 200, hwnd, (HMENU)ID_LISTVIEW, g_hInstance, nullptr);
             
             DWORD exStyles = LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER;
             ListView_SetExtendedListViewStyle(g_hListView, exStyles);
@@ -1022,23 +1591,26 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             col.cx = 260; col.pszText = const_cast<char*>("Speed");
             ListView_InsertColumn(g_hListView, 7, &col);
             
-            // Advanced Options Panel (adjusted Y position)
+            // Advanced Options Panel (moved down for tabs)
             CreateWindowA("STATIC", "Advanced Options", WS_VISIBLE | WS_CHILD | SS_LEFT,
-                20, 350, 200, 25, hwnd, nullptr, g_hInstance, nullptr);
+                20, 350, 200, 25, hwnd, (HMENU)ID_ADVANCED_OPTIONS_LABEL, g_hInstance, nullptr);
+            SendMessage(GetDlgItem(hwnd, ID_ADVANCED_OPTIONS_LABEL), WM_SETFONT, (WPARAM)hNormalFont, TRUE);
             
-            // Erasure Method (adjusted Y position)
+            // Erasure Method (moved down for tabs)
             CreateWindowA("STATIC", "Erasure Method :", WS_VISIBLE | WS_CHILD | SS_LEFT,
-                30, 380, 150, 20, hwnd, nullptr, g_hInstance, nullptr);
+                30, 380, 150, 20, hwnd, (HMENU)ID_ERASURE_METHOD_LABEL, g_hInstance, nullptr);
+            SendMessage(GetDlgItem(hwnd, ID_ERASURE_METHOD_LABEL), WM_SETFONT, (WPARAM)hNormalFont, TRUE);
             g_hMethodCombo = CreateWindowExA(0, "COMBOBOX", "", WS_VISIBLE | WS_CHILD | CBS_DROPDOWNLIST | CBS_HASSTRINGS | WS_VSCROLL,
                 190, 375, 350, 200, hwnd, (HMENU)ID_METHOD_COMBO, g_hInstance, nullptr);
             SendMessage(g_hMethodCombo, WM_SETFONT, (WPARAM)hNormalFont, TRUE);
             SendMessageA(g_hMethodCombo, CB_ADDSTRING, 0, (LPARAM)"Quick Wipe (Partition Table Removal)");
             SendMessageA(g_hMethodCombo, CB_ADDSTRING, 0, (LPARAM)"Secure Wipe (Zero All Sectors)");
-            SendMessage(g_hMethodCombo, CB_SETCURSEL, 0, 0);
+            SendMessage(g_hMethodCombo, CB_SETCURSEL, 0, 0); // Default to Quick Wipe for convenience
             
-            // Verification (aligned with Erasure Method)
+            // Verification (moved down for tabs)
             CreateWindowA("STATIC", "Verification :", WS_VISIBLE | WS_CHILD | SS_LEFT,
-                580, 380, 150, 20, hwnd, nullptr, g_hInstance, nullptr);
+                580, 380, 150, 20, hwnd, (HMENU)ID_VERIFICATION_LABEL, g_hInstance, nullptr);
+            SendMessage(GetDlgItem(hwnd, ID_VERIFICATION_LABEL), WM_SETFONT, (WPARAM)hNormalFont, TRUE);
             g_hVerificationCombo = CreateWindowExA(0, "COMBOBOX", "", WS_VISIBLE | WS_CHILD | CBS_DROPDOWNLIST | CBS_HASSTRINGS | WS_VSCROLL,
                 720, 375, 350, 200, hwnd, (HMENU)ID_VERIFICATION_COMBO, g_hInstance, nullptr);
             SendMessage(g_hVerificationCombo, WM_SETFONT, (WPARAM)hNormalFont, TRUE);
@@ -1047,71 +1619,184 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             SendMessageA(g_hVerificationCombo, CB_ADDSTRING, 0, (LPARAM)"Full Verification");
             SendMessage(g_hVerificationCombo, CB_SETCURSEL, 0, 0);
             
-            // Customer Information (for Erasure Details tab - initially hidden)
-            CreateWindowA("STATIC", "Customer Name:", WS_CHILD | SS_LEFT,
-                30, 160, 150, 20, hwnd, nullptr, g_hInstance, nullptr);
-            g_hCustomerNameInput = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", WS_CHILD | ES_LEFT | ES_AUTOHSCROLL,
-                190, 158, 400, 22, hwnd, nullptr, g_hInstance, nullptr);
-            SendMessage(g_hCustomerNameInput, WM_SETFONT, (WPARAM)hNormalFont, TRUE);
+            // Customer Information removed - no tab control
             
-            CreateWindowA("STATIC", "Address:", WS_CHILD | SS_LEFT,
-                30, 190, 150, 20, hwnd, nullptr, g_hInstance, nullptr);
-            g_hCustomerAddressInput = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", WS_CHILD | ES_LEFT | ES_AUTOHSCROLL,
-                190, 188, 400, 22, hwnd, nullptr, g_hInstance, nullptr);
-            SendMessage(g_hCustomerAddressInput, WM_SETFONT, (WPARAM)hNormalFont, TRUE);
-            
-            CreateWindowA("STATIC", "Phone:", WS_CHILD | SS_LEFT,
-                30, 220, 150, 20, hwnd, nullptr, g_hInstance, nullptr);
-            g_hCustomerPhoneInput = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", WS_CHILD | ES_LEFT | ES_AUTOHSCROLL,
-                190, 218, 400, 22, hwnd, nullptr, g_hInstance, nullptr);
-            SendMessage(g_hCustomerPhoneInput, WM_SETFONT, (WPARAM)hNormalFont, TRUE);
-            
-            CreateWindowA("STATIC", "Email:", WS_CHILD | SS_LEFT,
-                30, 250, 150, 20, hwnd, nullptr, g_hInstance, nullptr);
-            g_hCustomerEmailInput = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", WS_CHILD | ES_LEFT | ES_AUTOHSCROLL,
-                190, 248, 400, 22, hwnd, nullptr, g_hInstance, nullptr);
-            SendMessage(g_hCustomerEmailInput, WM_SETFONT, (WPARAM)hNormalFont, TRUE);
-            
-            // Progress section (modern style with increased height)
+            // Progress section (modern style with increased height) - moved down for tabs
             CreateWindowA("STATIC", "Progress:", WS_VISIBLE | WS_CHILD | SS_LEFT,
-                30, 410, 80, 20, hwnd, nullptr, g_hInstance, nullptr);
+                30, 410, 80, 20, hwnd, (HMENU)ID_PROGRESS_LABEL, g_hInstance, nullptr);
+            SendMessage(GetDlgItem(hwnd, ID_PROGRESS_LABEL), WM_SETFONT, (WPARAM)hNormalFont, TRUE);
             g_hProgressBar = CreateWindowExA(0, "msctls_progress32", "", WS_VISIBLE | WS_CHILD | PBS_SMOOTH,
                 120, 410, 800, 25, hwnd, (HMENU)ID_PROGRESS, g_hInstance, nullptr);
             SendMessage(g_hProgressBar, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
             SendMessage(g_hProgressBar, PBM_SETBARCOLOR, 0, RGB(0, 120, 212)); // Modern blue
+            SendMessage(g_hProgressBar, PBM_SETPOS, 0, 0); // Initialize to 0
             
             CreateWindowA("STATIC", "Fine:", WS_VISIBLE | WS_CHILD | SS_LEFT,
-                30, 443, 80, 20, hwnd, nullptr, g_hInstance, nullptr);
+                30, 443, 80, 20, hwnd, (HMENU)ID_FINE_LABEL, g_hInstance, nullptr);
+            SendMessage(GetDlgItem(hwnd, ID_FINE_LABEL), WM_SETFONT, (WPARAM)hNormalFont, TRUE);
             g_hProgressBarFine = CreateWindowExA(0, "msctls_progress32", "", WS_VISIBLE | WS_CHILD | PBS_SMOOTH,
                 120, 443, 800, 22, hwnd, nullptr, g_hInstance, nullptr);
             SendMessage(g_hProgressBarFine, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
             SendMessage(g_hProgressBarFine, PBM_SETBARCOLOR, 0, RGB(16, 160, 80)); // Modern green
+            SendMessage(g_hProgressBarFine, PBM_SETPOS, 0, 0); // Initialize to 0
             
             g_hEtaText = CreateWindowA("STATIC", "ETA: --:--:--", WS_VISIBLE | WS_CHILD | SS_LEFT,
                 950, 425, 180, 20, hwnd, (HMENU)ID_ETA_TEXT, g_hInstance, nullptr);
             SendMessage(g_hEtaText, WM_SETFONT, (WPARAM)hNormalFont, TRUE);
             
             // Buttons (modern style with owner-draw for rounded corners + BS_NOTIFY for hover)
+            // Buttons centered and properly aligned
+            // Small buttons (Refresh, Exit) - top row, Exit on right (moved down for tabs)
             g_hBtnRefresh = CreateWindowA("BUTTON", "Refresh", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW | BS_NOTIFY,
-                230, 485, 130, 35, hwnd, (HMENU)ID_BTN_REFRESH, g_hInstance, nullptr);
+                50, 490, 120, 35, hwnd, (HMENU)ID_BTN_REFRESH, g_hInstance, nullptr);
             
+            g_hBtnExit = CreateWindowA("BUTTON", "Exit", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW | BS_NOTIFY,
+                1000, 490, 120, 35, hwnd, (HMENU)ID_BTN_EXIT, g_hInstance, nullptr);
+            
+            // Header button (About as small icon)
+            CreateWindowA("BUTTON", "i", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW | BS_NOTIFY,
+                1080, 25, 40, 40, hwnd, (HMENU)ID_ABOUT_DIALOG, g_hInstance, nullptr);
+            
+            // Tab buttons below header (like in the image) - proper tab appearance
+            CreateWindowA("BUTTON", "Erasure", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW | BS_NOTIFY,
+                20, 90, 120, 30, hwnd, (HMENU)ID_TAB_ERASURE, g_hInstance, nullptr);
+            
+            CreateWindowA("BUTTON", "Erasure Details", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW | BS_NOTIFY,
+                150, 90, 120, 30, hwnd, (HMENU)ID_TAB_DETAILS, g_hInstance, nullptr);
+            
+            CreateWindowA("BUTTON", "Report", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW | BS_NOTIFY,
+                280, 90, 120, 30, hwnd, (HMENU)ID_TAB_REPORT, g_hInstance, nullptr);
+            
+            // Erasure Details Form (initially hidden)
+            CreateWindowA("STATIC", "COMPANY INFORMATION", WS_CHILD | SS_LEFT,
+                30, 130, 300, 25, hwnd, (HMENU)ID_FORM_TITLE_LABEL, g_hInstance, nullptr);
+            SendMessage(GetDlgItem(hwnd, ID_FORM_TITLE_LABEL), WM_SETFONT, (WPARAM)g_hTitleFont, TRUE);
+            
+            // Company Name
+            CreateWindowA("STATIC", "Company Name:", WS_CHILD | SS_LEFT,
+                30, 160, 120, 20, hwnd, (HMENU)ID_COMPANY_NAME_LABEL, g_hInstance, nullptr);
+            SendMessage(GetDlgItem(hwnd, ID_COMPANY_NAME_LABEL), WM_SETFONT, (WPARAM)hNormalFont, TRUE);
+            CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", WS_CHILD | ES_LEFT,
+                160, 158, 300, 25, hwnd, (HMENU)ID_CUSTOMER_NAME_INPUT, g_hInstance, nullptr);
+            
+            // Technical Person
+            CreateWindowA("STATIC", "Technical Person:", WS_CHILD | SS_LEFT,
+                30, 190, 120, 20, hwnd, (HMENU)ID_TECHNICAL_PERSON_LABEL, g_hInstance, nullptr);
+            SendMessage(GetDlgItem(hwnd, ID_TECHNICAL_PERSON_LABEL), WM_SETFONT, (WPARAM)hNormalFont, TRUE);
+            CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", WS_CHILD | ES_LEFT,
+                160, 188, 300, 25, hwnd, (HMENU)ID_TECHNICAL_PERSON_INPUT, g_hInstance, nullptr);
+            
+            // Position
+            CreateWindowA("STATIC", "Position:", WS_CHILD | SS_LEFT,
+                30, 220, 120, 20, hwnd, (HMENU)ID_POSITION_LABEL, g_hInstance, nullptr);
+            SendMessage(GetDlgItem(hwnd, ID_POSITION_LABEL), WM_SETFONT, (WPARAM)hNormalFont, TRUE);
+            CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", WS_CHILD | ES_LEFT,
+                160, 218, 300, 25, hwnd, (HMENU)ID_POSITION_INPUT, g_hInstance, nullptr);
+            
+            // Phone
+            CreateWindowA("STATIC", "Phone:", WS_CHILD | SS_LEFT,
+                30, 250, 120, 20, hwnd, (HMENU)ID_PHONE_LABEL, g_hInstance, nullptr);
+            SendMessage(GetDlgItem(hwnd, ID_PHONE_LABEL), WM_SETFONT, (WPARAM)hNormalFont, TRUE);
+            CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", WS_CHILD | ES_LEFT,
+                160, 248, 300, 25, hwnd, (HMENU)ID_PHONE_INPUT, g_hInstance, nullptr);
+            
+            // Email
+            CreateWindowA("STATIC", "Email:", WS_CHILD | SS_LEFT,
+                30, 280, 120, 20, hwnd, (HMENU)ID_EMAIL_LABEL, g_hInstance, nullptr);
+            SendMessage(GetDlgItem(hwnd, ID_EMAIL_LABEL), WM_SETFONT, (WPARAM)hNormalFont, TRUE);
+            CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", WS_CHILD | ES_LEFT,
+                160, 278, 300, 25, hwnd, (HMENU)ID_EMAIL_INPUT, g_hInstance, nullptr);
+            
+            // Address
+            CreateWindowA("STATIC", "Address:", WS_CHILD | SS_LEFT,
+                30, 320, 120, 20, hwnd, (HMENU)ID_ADDRESS_LABEL, g_hInstance, nullptr);
+            SendMessage(GetDlgItem(hwnd, ID_ADDRESS_LABEL), WM_SETFONT, (WPARAM)hNormalFont, TRUE);
+            CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", WS_CHILD | ES_LEFT | ES_MULTILINE,
+                160, 318, 300, 50, hwnd, (HMENU)ID_ADDRESS_INPUT, g_hInstance, nullptr);
+            
+            // Issuing Certificate Section (Right side) - Initially hidden, shown only in Details tab
+            CreateWindowA("STATIC", "ISSUING CERTIFICATE", WS_CHILD | SS_LEFT,
+                600, 130, 250, 25, hwnd, (HMENU)ID_ISSUING_CERT_LABEL, g_hInstance, nullptr);
+            SendMessage(GetDlgItem(hwnd, ID_ISSUING_CERT_LABEL), WM_SETFONT, (WPARAM)g_hTitleFont, TRUE);
+            
+            // Issuing Company Name
+            CreateWindowA("STATIC", "Company Name:", WS_CHILD | SS_LEFT,
+                600, 160, 150, 25, hwnd, (HMENU)ID_ISSUING_COMPANY_LABEL, g_hInstance, nullptr);
+            SendMessage(GetDlgItem(hwnd, ID_ISSUING_COMPANY_LABEL), WM_SETFONT, (WPARAM)hNormalFont, TRUE);
+            CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", WS_CHILD | ES_LEFT,
+                760, 158, 300, 25, hwnd, (HMENU)ID_ISSUING_COMPANY_INPUT, g_hInstance, nullptr);
+            
+            // Issuing Technician Name
+            CreateWindowA("STATIC", "Technician Name:", WS_CHILD | SS_LEFT,
+                600, 190, 150, 25, hwnd, (HMENU)ID_ISSUING_TECHNICIAN_LABEL, g_hInstance, nullptr);
+            SendMessage(GetDlgItem(hwnd, ID_ISSUING_TECHNICIAN_LABEL), WM_SETFONT, (WPARAM)hNormalFont, TRUE);
+            CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", WS_CHILD | ES_LEFT,
+                760, 188, 300, 25, hwnd, (HMENU)ID_ISSUING_TECHNICIAN_INPUT, g_hInstance, nullptr);
+            
+            // Issuing Company Location
+            CreateWindowA("STATIC", "Company Location:", WS_CHILD | SS_LEFT,
+                600, 220, 150, 25, hwnd, (HMENU)ID_ISSUING_LOCATION_LABEL, g_hInstance, nullptr);
+            SendMessage(GetDlgItem(hwnd, ID_ISSUING_LOCATION_LABEL), WM_SETFONT, (WPARAM)hNormalFont, TRUE);
+            CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", WS_CHILD | ES_LEFT,
+                760, 218, 300, 25, hwnd, (HMENU)ID_ISSUING_LOCATION_INPUT, g_hInstance, nullptr);
+            
+            // Issuing Company Phone
+            CreateWindowA("STATIC", "Company Phone:", WS_CHILD | SS_LEFT,
+                600, 250, 150, 25, hwnd, (HMENU)ID_ISSUING_PHONE_LABEL, g_hInstance, nullptr);
+            SendMessage(GetDlgItem(hwnd, ID_ISSUING_PHONE_LABEL), WM_SETFONT, (WPARAM)hNormalFont, TRUE);
+            CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", WS_CHILD | ES_LEFT,
+                760, 248, 300, 25, hwnd, (HMENU)ID_ISSUING_PHONE_INPUT, g_hInstance, nullptr);
+            
+            // Issuing Company Email
+            CreateWindowA("STATIC", "Company Email:", WS_CHILD | SS_LEFT,
+                600, 280, 150, 25, hwnd, (HMENU)ID_ISSUING_EMAIL_LABEL, g_hInstance, nullptr);
+            SendMessage(GetDlgItem(hwnd, ID_ISSUING_EMAIL_LABEL), WM_SETFONT, (WPARAM)hNormalFont, TRUE);
+            CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", WS_CHILD | ES_LEFT,
+                760, 278, 300, 25, hwnd, (HMENU)ID_ISSUING_EMAIL_INPUT, g_hInstance, nullptr);
+            
+            // Save Form Button
+            CreateWindowA("BUTTON", "Save Form", WS_CHILD | BS_OWNERDRAW | BS_NOTIFY,
+                30, 450, 150, 40, hwnd, (HMENU)ID_SAVE_FORM_BUTTON, g_hInstance, nullptr);
+            
+            // Report Section (initially hidden) - BitRaser exact style
+            // Right side header with logo (removed "Report :" text)
+            
+            // Report section - only preview area and buttons (removed all static labels)
+            
+            // Report Buttons (below preview area) - Initially hidden
+            // Preview Report: 30-220 (190px wide), Export PDF: 230-380 (150px wide)
+            CreateWindowA("BUTTON", "Preview Report", WS_CHILD | BS_OWNERDRAW | BS_NOTIFY,
+                30, 490, 190, 40, hwnd, (HMENU)ID_PREVIEW_BUTTON, g_hInstance, nullptr);
+            
+            CreateWindowA("BUTTON", "Export PDF", WS_CHILD | BS_OWNERDRAW | BS_NOTIFY,
+                230, 490, 150, 40, hwnd, (HMENU)ID_EXPORT_PDF_BUTTON, g_hInstance, nullptr);
+            
+            // Set fonts for report buttons
+            SendMessage(GetDlgItem(hwnd, ID_PREVIEW_BUTTON), WM_SETFONT, (WPARAM)g_hNormalFont, TRUE);
+            SendMessage(GetDlgItem(hwnd, ID_EXPORT_PDF_BUTTON), WM_SETFONT, (WPARAM)g_hNormalFont, TRUE);
+            
+            // Report Preview Area (initially hidden) - RichEdit Control
+            // Width adjusted to fill available space (window width 1150 - left margin 30 - right margin 20 = 1100)
+            CreateWindowA("RichEdit20A", "", WS_CHILD | ES_MULTILINE | ES_READONLY | WS_VSCROLL | ES_AUTOVSCROLL,
+                30, 130, 1100, 300, hwnd, (HMENU)ID_REPORT_PREVIEW_AREA, g_hInstance, nullptr);
+            // Set monospace font for proper alignment
+            HFONT hMonospaceFont = CreateFontA(-12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, 
+                DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, 
+                FF_MODERN | FIXED_PITCH, "Consolas");
+            SendMessage(GetDlgItem(hwnd, ID_REPORT_PREVIEW_AREA), WM_SETFONT, (WPARAM)hMonospaceFont, TRUE);
+            
+            // Main action buttons (Erase, Cancel) - center of window (moved down for tabs)
             g_hBtnWipe = CreateWindowA("BUTTON", "Erase", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW | BS_NOTIFY,
-                390, 473, 170, 50, hwnd, (HMENU)ID_BTN_WIPE, g_hInstance, nullptr);
+                350, 480, 150, 50, hwnd, (HMENU)ID_BTN_WIPE, g_hInstance, nullptr);
             
             g_hBtnCancel = CreateWindowA("BUTTON", "Cancel", WS_CHILD | BS_OWNERDRAW | BS_NOTIFY,
-                570, 473, 170, 50, hwnd, (HMENU)ID_BTN_CANCEL, g_hInstance, nullptr);
+                520, 480, 150, 50, hwnd, (HMENU)ID_BTN_CANCEL, g_hInstance, nullptr);
             EnableWindow(g_hBtnCancel, FALSE); // Initially disabled
             
-            CreateWindowA("BUTTON", "Exit", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW | BS_NOTIFY,
-                750, 485, 130, 35, hwnd, (HMENU)ID_BTN_EXIT, g_hInstance, nullptr);
-            
-            CreateWindowA("BUTTON", "About", WS_VISIBLE | WS_CHILD | BS_OWNERDRAW | BS_NOTIFY,
-                890, 485, 130, 35, hwnd, (HMENU)ID_ABOUT_DIALOG, g_hInstance, nullptr);
-            
-            // Status log at bottom (multiline, read-only, auto-scroll)
+            // Status log at bottom (multiline, read-only, auto-scroll) - moved down for tabs
             g_hStatusText = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "", 
                 WS_VISIBLE | WS_CHILD | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
-                10, 540, 1120, 200, hwnd, (HMENU)ID_STATUS_TEXT, g_hInstance, nullptr);
+                10, 550, 1120, 200, hwnd, (HMENU)ID_STATUS_TEXT, g_hInstance, nullptr);
             SendMessage(g_hStatusText, WM_SETFONT, (WPARAM)hNormalFont, TRUE);
             SetWindowTextA(g_hStatusText, "[System] Application started - Scanning disks...\r\n");
             
@@ -1131,8 +1816,29 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             
             LogMessage("Application started");
+            
+            // Load form data from file
+            LoadFormData();
+            UpdateFormFields();
+            
+            // Load report data from file
+            LoadReportData();
+            
             RefreshDiskList();
             loadReports();
+            
+            // Hide Issuing Certificate elements initially (Erasure tab is active by default)
+            ShowWindow(GetDlgItem(hwnd, ID_ISSUING_CERT_LABEL), SW_HIDE);
+            ShowWindow(GetDlgItem(hwnd, ID_ISSUING_COMPANY_LABEL), SW_HIDE);
+            ShowWindow(GetDlgItem(hwnd, ID_ISSUING_COMPANY_INPUT), SW_HIDE);
+            ShowWindow(GetDlgItem(hwnd, ID_ISSUING_TECHNICIAN_LABEL), SW_HIDE);
+            ShowWindow(GetDlgItem(hwnd, ID_ISSUING_TECHNICIAN_INPUT), SW_HIDE);
+            ShowWindow(GetDlgItem(hwnd, ID_ISSUING_LOCATION_LABEL), SW_HIDE);
+            ShowWindow(GetDlgItem(hwnd, ID_ISSUING_LOCATION_INPUT), SW_HIDE);
+            ShowWindow(GetDlgItem(hwnd, ID_ISSUING_PHONE_LABEL), SW_HIDE);
+            ShowWindow(GetDlgItem(hwnd, ID_ISSUING_PHONE_INPUT), SW_HIDE);
+            ShowWindow(GetDlgItem(hwnd, ID_ISSUING_EMAIL_LABEL), SW_HIDE);
+            ShowWindow(GetDlgItem(hwnd, ID_ISSUING_EMAIL_INPUT), SW_HIDE);
             
             // Force repaint to show header gradient
             InvalidateRect(hwnd, NULL, TRUE);
@@ -1191,19 +1897,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             SetTextColor(hdc, RGB(255, 255, 255)); // Pure white
             
             HFONT hTitleFont = CreateFontA(-42, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, FF_SWISS | VARIABLE_PITCH, "Segoe UI");
+                OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, FF_SWISS | VARIABLE_PITCH, "Verdana");
             HFONT hOldFont = (HFONT)SelectObject(hdc, hTitleFont);
             
-            RECT titleRect = {80, 15, 1150, 90};
+            RECT titleRect = {120, 15, 1150, 90};
             DrawTextA(hdc, "PIWIPER", -1, &titleRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
             
             // Subtitle with better contrast
             SelectObject(hdc, hOldFont);
             HFONT hSubFont = CreateFontA(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, FF_SWISS | VARIABLE_PITCH, "Segoe UI");
+                OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, FF_SWISS | VARIABLE_PITCH, "Verdana");
             SelectObject(hdc, hSubFont);
             SetTextColor(hdc, RGB(220, 235, 255)); // Lighter for better contrast
-            RECT subRect = {240, 15, 1150, 90};
+            RECT subRect = {600, 15, 1150, 90};
             DrawTextA(hdc, "Professional Disk Eraser", -1, &subRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
             
             SelectObject(hdc, hOldFont);
@@ -1218,19 +1924,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             int id = LOWORD(wParam);
             int notifyCode = HIWORD(wParam);
             
-            OutputDebugStringA(("[PIWIPER] WM_COMMAND: id=" + std::to_string(id) + ", notify=" + std::to_string(notifyCode)).c_str());
-            
             if (id == ID_BTN_REFRESH) {
                     LogMessage("Refresh button clicked");
-                    OutputDebugStringA("[PIWIPER] Refresh button clicked - calling RefreshDiskList");
                     try {
                     RefreshDiskList();
-                        OutputDebugStringA("[PIWIPER] RefreshDiskList completed successfully");
-                    } catch (const std::exception& e) {
-                        OutputDebugStringA(("[PIWIPER] RefreshDiskList ERROR: " + std::string(e.what())).c_str());
-                        AppendStatusMessage("ERROR: Failed to refresh disk list");
                     } catch (...) {
-                        OutputDebugStringA("[PIWIPER] RefreshDiskList ERROR: Unknown exception");
                         AppendStatusMessage("ERROR: Failed to refresh disk list");
                 }
             } else if (id == ID_BTN_WIPE) {
@@ -1239,23 +1937,242 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 if (g_isWiping) {
                         g_cancelRequested = true;
                     LogMessage("Cancellation requested by user");
-                    OutputDebugStringA("[PIWIPER] Cancel button clicked - wipe will stop gracefully");
                     SetWindowTextA(g_hStatusText, "Cancelling operation - please wait...");
                 }
             } else if (id == ID_BTN_EXIT) {
                 PostMessage(hwnd, WM_CLOSE, 0, 0);
             } else if (id == ID_ABOUT_DIALOG) {
                 ShowAboutDialog();
+            } else if (id == ID_TAB_ERASURE) {
+                // Switch to Erasure tab - show ListView, Advanced Options, and buttons
+                g_activeTab = 1028; // ID_TAB_ERASURE
+                ShowWindow(g_hListView, SW_SHOW);
+                ShowWindow(GetDlgItem(hwnd, ID_METHOD_COMBO), SW_SHOW);
+                ShowWindow(GetDlgItem(hwnd, ID_VERIFICATION_COMBO), SW_SHOW);
+                ShowWindow(g_hProgressBar, SW_SHOW);
+                ShowWindow(g_hProgressBarFine, SW_SHOW);
+                ShowWindow(g_hEtaText, SW_SHOW);
+                ShowWindow(g_hBtnWipe, SW_SHOW);
+                ShowWindow(g_hBtnCancel, SW_HIDE); // Hide cancel button initially
+                ShowWindow(g_hBtnRefresh, SW_SHOW); // Show Refresh button
+                // Show Advanced Options labels
+                ShowWindow(GetDlgItem(hwnd, ID_ADVANCED_OPTIONS_LABEL), SW_SHOW);
+                ShowWindow(GetDlgItem(hwnd, ID_ERASURE_METHOD_LABEL), SW_SHOW);
+                ShowWindow(GetDlgItem(hwnd, ID_VERIFICATION_LABEL), SW_SHOW);
+                // Show Progress labels
+                ShowWindow(GetDlgItem(hwnd, ID_PROGRESS_LABEL), SW_SHOW);
+                ShowWindow(GetDlgItem(hwnd, ID_FINE_LABEL), SW_SHOW);
+                // Hide form controls and labels
+                ShowWindow(GetDlgItem(hwnd, ID_FORM_TITLE_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_COMPANY_NAME_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_TECHNICAL_PERSON_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_POSITION_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_PHONE_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_EMAIL_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_SAVE_FORM_BUTTON), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_CUSTOMER_NAME_INPUT), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_TECHNICAL_PERSON_INPUT), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_POSITION_INPUT), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_PHONE_INPUT), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_EMAIL_INPUT), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_ADDRESS_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_ADDRESS_INPUT), SW_HIDE);
+                // Hide Issuing Certificate elements
+                ShowWindow(GetDlgItem(hwnd, ID_ISSUING_CERT_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_ISSUING_COMPANY_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_ISSUING_COMPANY_INPUT), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_ISSUING_TECHNICIAN_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_ISSUING_TECHNICIAN_INPUT), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_ISSUING_LOCATION_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_ISSUING_LOCATION_INPUT), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_ISSUING_PHONE_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_ISSUING_PHONE_INPUT), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_ISSUING_EMAIL_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_ISSUING_EMAIL_INPUT), SW_HIDE);
+                // Hide report elements - only preview area and buttons (static labels removed)
+                ShowWindow(GetDlgItem(hwnd, ID_PREVIEW_BUTTON), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_EXPORT_PDF_BUTTON), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_REPORT_PREVIEW_AREA), SW_HIDE);
+                // Force redraw to update tab colors
+                InvalidateRect(hwnd, nullptr, TRUE);
+            } else if (id == ID_TAB_DETAILS) {
+                // Switch to Erasure Details tab - hide ListView, Advanced Options, and buttons, show form
+                g_activeTab = 1029; // ID_TAB_DETAILS
+                ShowWindow(g_hListView, SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_METHOD_COMBO), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_VERIFICATION_COMBO), SW_HIDE);
+                ShowWindow(g_hProgressBar, SW_HIDE);
+                ShowWindow(g_hProgressBarFine, SW_HIDE);
+                ShowWindow(g_hEtaText, SW_HIDE);
+                ShowWindow(g_hBtnWipe, SW_HIDE);
+                ShowWindow(g_hBtnCancel, SW_HIDE);
+                ShowWindow(g_hBtnRefresh, SW_HIDE); // Hide Refresh button
+                // Hide Advanced Options labels
+                ShowWindow(GetDlgItem(hwnd, ID_ADVANCED_OPTIONS_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_ERASURE_METHOD_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_VERIFICATION_LABEL), SW_HIDE);
+                // Hide Progress labels
+                ShowWindow(GetDlgItem(hwnd, ID_PROGRESS_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_FINE_LABEL), SW_HIDE);
+                // Show form controls and labels
+                ShowWindow(GetDlgItem(hwnd, ID_FORM_TITLE_LABEL), SW_SHOW);
+                ShowWindow(GetDlgItem(hwnd, ID_COMPANY_NAME_LABEL), SW_SHOW);
+                ShowWindow(GetDlgItem(hwnd, ID_TECHNICAL_PERSON_LABEL), SW_SHOW);
+                ShowWindow(GetDlgItem(hwnd, ID_POSITION_LABEL), SW_SHOW);
+                ShowWindow(GetDlgItem(hwnd, ID_PHONE_LABEL), SW_SHOW);
+                ShowWindow(GetDlgItem(hwnd, ID_EMAIL_LABEL), SW_SHOW);
+                ShowWindow(GetDlgItem(hwnd, ID_SAVE_FORM_BUTTON), SW_SHOW);
+                ShowWindow(GetDlgItem(hwnd, ID_CUSTOMER_NAME_INPUT), SW_SHOW);
+                ShowWindow(GetDlgItem(hwnd, ID_TECHNICAL_PERSON_INPUT), SW_SHOW);
+                ShowWindow(GetDlgItem(hwnd, ID_POSITION_INPUT), SW_SHOW);
+                ShowWindow(GetDlgItem(hwnd, ID_PHONE_INPUT), SW_SHOW);
+                ShowWindow(GetDlgItem(hwnd, ID_EMAIL_INPUT), SW_SHOW);
+                ShowWindow(GetDlgItem(hwnd, ID_ADDRESS_LABEL), SW_SHOW);
+                ShowWindow(GetDlgItem(hwnd, ID_ADDRESS_INPUT), SW_SHOW);
+                // Show Issuing Certificate elements
+                HWND hCertLabel = GetDlgItem(hwnd, ID_ISSUING_CERT_LABEL);
+                HWND hCompanyLabel = GetDlgItem(hwnd, ID_ISSUING_COMPANY_LABEL);
+                HWND hCompanyInput = GetDlgItem(hwnd, ID_ISSUING_COMPANY_INPUT);
+                HWND hTechnicianLabel = GetDlgItem(hwnd, ID_ISSUING_TECHNICIAN_LABEL);
+                HWND hTechnicianInput = GetDlgItem(hwnd, ID_ISSUING_TECHNICIAN_INPUT);
+                HWND hLocationLabel = GetDlgItem(hwnd, ID_ISSUING_LOCATION_LABEL);
+                HWND hLocationInput = GetDlgItem(hwnd, ID_ISSUING_LOCATION_INPUT);
+                HWND hPhoneLabel = GetDlgItem(hwnd, ID_ISSUING_PHONE_LABEL);
+                HWND hPhoneInput = GetDlgItem(hwnd, ID_ISSUING_PHONE_INPUT);
+                HWND hEmailLabel = GetDlgItem(hwnd, ID_ISSUING_EMAIL_LABEL);
+                HWND hEmailInput = GetDlgItem(hwnd, ID_ISSUING_EMAIL_INPUT);
+                
+                if (hCertLabel) {
+                    ShowWindow(hCertLabel, SW_SHOW);
+                    SetWindowPos(hCertLabel, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                    UpdateWindow(hCertLabel);
+                }
+                if (hCompanyLabel) {
+                    ShowWindow(hCompanyLabel, SW_SHOW);
+                    SetWindowPos(hCompanyLabel, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                    UpdateWindow(hCompanyLabel);
+                }
+                if (hCompanyInput) {
+                    ShowWindow(hCompanyInput, SW_SHOW);
+                    SetWindowPos(hCompanyInput, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                    UpdateWindow(hCompanyInput);
+                }
+                if (hTechnicianLabel) {
+                    ShowWindow(hTechnicianLabel, SW_SHOW);
+                    SetWindowPos(hTechnicianLabel, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                    UpdateWindow(hTechnicianLabel);
+                }
+                if (hTechnicianInput) {
+                    ShowWindow(hTechnicianInput, SW_SHOW);
+                    SetWindowPos(hTechnicianInput, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                    UpdateWindow(hTechnicianInput);
+                }
+                if (hLocationLabel) {
+                    ShowWindow(hLocationLabel, SW_SHOW);
+                    SetWindowPos(hLocationLabel, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                    UpdateWindow(hLocationLabel);
+                }
+                if (hLocationInput) {
+                    ShowWindow(hLocationInput, SW_SHOW);
+                    SetWindowPos(hLocationInput, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                    UpdateWindow(hLocationInput);
+                }
+                if (hPhoneLabel) {
+                    ShowWindow(hPhoneLabel, SW_SHOW);
+                    SetWindowPos(hPhoneLabel, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                    UpdateWindow(hPhoneLabel);
+                }
+                if (hPhoneInput) {
+                    ShowWindow(hPhoneInput, SW_SHOW);
+                    SetWindowPos(hPhoneInput, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                    UpdateWindow(hPhoneInput);
+                }
+                if (hEmailLabel) {
+                    ShowWindow(hEmailLabel, SW_SHOW);
+                    SetWindowPos(hEmailLabel, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                    UpdateWindow(hEmailLabel);
+                }
+                if (hEmailInput) {
+                    ShowWindow(hEmailInput, SW_SHOW);
+                    SetWindowPos(hEmailInput, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                    UpdateWindow(hEmailInput);
+                }
+                
+                // Force redraw of the entire window
+                InvalidateRect(hwnd, nullptr, TRUE);
+                UpdateWindow(hwnd);
+                // Hide report elements - only preview area and buttons (static labels removed)
+                ShowWindow(GetDlgItem(hwnd, ID_PREVIEW_BUTTON), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_EXPORT_PDF_BUTTON), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_REPORT_PREVIEW_AREA), SW_HIDE);
+                // Update form fields with loaded data
+                UpdateFormFields();
+                // Force redraw to update tab colors
+                InvalidateRect(hwnd, nullptr, TRUE);
+            } else if (id == ID_TAB_REPORT) {
+                // Switch to Report tab - show report elements
+                g_activeTab = 1030; // ID_TAB_REPORT
+                ShowWindow(g_hListView, SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_METHOD_COMBO), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_VERIFICATION_COMBO), SW_HIDE);
+                ShowWindow(g_hProgressBar, SW_HIDE);
+                ShowWindow(g_hProgressBarFine, SW_HIDE);
+                ShowWindow(g_hEtaText, SW_HIDE);
+                ShowWindow(g_hBtnWipe, SW_HIDE);
+                ShowWindow(g_hBtnCancel, SW_HIDE);
+                ShowWindow(g_hBtnRefresh, SW_HIDE); // Hide Refresh button
+                // Hide Advanced Options labels
+                ShowWindow(GetDlgItem(hwnd, ID_ADVANCED_OPTIONS_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_ERASURE_METHOD_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_VERIFICATION_LABEL), SW_HIDE);
+                // Hide Progress labels
+                ShowWindow(GetDlgItem(hwnd, ID_PROGRESS_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_FINE_LABEL), SW_HIDE);
+                // Hide form controls and labels
+                ShowWindow(GetDlgItem(hwnd, ID_FORM_TITLE_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_COMPANY_NAME_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_TECHNICAL_PERSON_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_POSITION_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_PHONE_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_EMAIL_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_SAVE_FORM_BUTTON), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_CUSTOMER_NAME_INPUT), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_TECHNICAL_PERSON_INPUT), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_POSITION_INPUT), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_PHONE_INPUT), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_EMAIL_INPUT), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_ADDRESS_LABEL), SW_HIDE);
+                ShowWindow(GetDlgItem(hwnd, ID_ADDRESS_INPUT), SW_HIDE);
+                // Show report elements - only preview area and buttons (static labels removed)
+                ShowWindow(GetDlgItem(hwnd, ID_PREVIEW_BUTTON), SW_SHOW);
+                ShowWindow(GetDlgItem(hwnd, ID_EXPORT_PDF_BUTTON), SW_SHOW);
+                // Show preview area
+                ShowWindow(GetDlgItem(hwnd, ID_REPORT_PREVIEW_AREA), SW_SHOW);
+                // Update report data
+                UpdateReportFields();
+                // Update preview area with report content
+                UpdateReportPreview();
+                // Force redraw to update tab colors
+                InvalidateRect(hwnd, nullptr, TRUE);
+            } else if (id == ID_SAVE_FORM_BUTTON) {
+                static bool isSaving = false;
+                if (isSaving) return 0; // Prevent double click
+                isSaving = true;
+                GetFormDataFromFields();
+                SaveFormData(true); // Show message
+                isSaving = false;
+            } else if (id == ID_PREVIEW_BUTTON) {
+                ShowPreviewDialog();
+            } else if (id == ID_EXPORT_PDF_BUTTON) {
+                MessageBoxA(hwnd, "PDF export functionality will be implemented soon!", "Export PDF", MB_OK | MB_ICONINFORMATION);
             } else if (id == ID_METHOD_COMBO && notifyCode == CBN_SELCHANGE) {
                 int sel = SendMessage(g_hMethodCombo, CB_GETCURSEL, 0, 0);
                 if (sel == 0) {
                     g_quickWipe = true;
                     LogMessage("Quick wipe mode selected (fast - partition table removal)");
-                    OutputDebugStringA("[PIWIPER] ComboBox: g_quickWipe = true");
                 } else if (sel == 1) {
                     g_quickWipe = false;
                     LogMessage("Secure wipe mode selected (slow - zeros all sectors - may take hours!)");
-                    OutputDebugStringA("[PIWIPER] ComboBox: g_quickWipe = false (SECURE MODE)");
                 }
                 // Return focus to ListView so selection stays blue
                 SetFocus(g_hListView);
@@ -1275,20 +2192,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             int etaSec = LOWORD(lParam);
             int speedMBps = HIWORD(lParam);
             
-            // Debug: Log progress updates (throttled - only every 10%)
-            static int lastLoggedProgress = -1;
-            if (progress % 10 == 0 && progress != lastLoggedProgress) {
-                OutputDebugStringA(("[PIWIPER] Progress update: " + std::to_string(progress) + "%, Fine: " + std::to_string(fineProgress) + "%, ETA: " + std::to_string(etaSec) + "s, Speed: " + std::to_string(speedMBps) + " MB/s").c_str());
-                lastLoggedProgress = progress;
-            }
             
             // Update progress bars
             if (g_hProgressBar) {
                 SendMessageA(g_hProgressBar, PBM_SETPOS, progress, 0);
+                // Force redraw
+                InvalidateRect(g_hProgressBar, NULL, TRUE);
+                UpdateWindow(g_hProgressBar);
             }
             if (g_hProgressBarFine) {
                 // Fine progress bar cycles 0-100% every 5MB
                 SendMessageA(g_hProgressBarFine, PBM_SETPOS, fineProgress, 0);
+                // Force redraw
+                InvalidateRect(g_hProgressBarFine, NULL, TRUE);
+                UpdateWindow(g_hProgressBarFine);
             }
             
             // Update progress text
@@ -1368,6 +2285,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 MessageBoxA(hwnd, "Disk wipe failed! Check log for details.", "Error", MB_OK | MB_ICONERROR);
             }
             
+            // Update report preview with latest wipe data
+            UpdateReportPreview();
+            
             RefreshDiskList();
             loadReports();
             return 0;
@@ -1378,6 +2298,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 MessageBoxA(hwnd, "Please wait for the wipe operation to complete.", "Operation In Progress", MB_OK | MB_ICONWARNING);
                 return 0;
             }
+            // Save form data before closing
+            GetFormDataFromFields();
+            SaveFormData(false); // Silent save
             DestroyWindow(hwnd);
             return 0;
             
@@ -1404,14 +2327,63 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     baseColor = RGB(100, 100, 100);  // Gray
                     textColor = RGB(255, 255, 255);
                     btnText = "Refresh";
-                } else if (dis->hwndItem == GetDlgItem(g_hWnd, ID_ABOUT_DIALOG)) {
-                    baseColor = RGB(100, 100, 100);  // Gray for About
-                    textColor = RGB(255, 255, 255);
-                    btnText = "About";
-                } else {
-                    baseColor = RGB(80, 80, 80);   // Dark gray for Exit
+                } else if (dis->hwndItem == g_hBtnExit) {
+                    baseColor = RGB(80, 80, 80);     // Dark gray for Exit
                     textColor = RGB(255, 255, 255);
                     btnText = "Exit";
+                } else if (dis->hwndItem == GetDlgItem(g_hWnd, ID_SAVE_FORM_BUTTON)) {
+                    baseColor = RGB(0, 120, 212);    // Blue for Save
+                    textColor = RGB(255, 255, 255);
+                    btnText = "Save Form";
+                    hFont = g_hTitleFont;
+                } else if (dis->hwndItem == GetDlgItem(g_hWnd, ID_PREVIEW_BUTTON)) {
+                    baseColor = RGB(0, 120, 212);    // Blue for Preview
+                    textColor = RGB(255, 255, 255);
+                    btnText = "Preview Report";
+                    hFont = g_hTitleFont;
+                } else if (dis->hwndItem == GetDlgItem(g_hWnd, ID_EXPORT_PDF_BUTTON)) {
+                    baseColor = RGB(0, 120, 212);    // Blue for Export
+                    textColor = RGB(255, 255, 255);
+                    btnText = "Export PDF";
+                    hFont = g_hTitleFont;
+                } else if (dis->hwndItem == GetDlgItem(g_hWnd, ID_TAB_ERASURE)) {
+                    // Check if this is the active tab
+                    if (g_activeTab == 1028) { // ID_TAB_ERASURE
+                        baseColor = RGB(0, 120, 212);  // Blue for active
+                        textColor = RGB(255, 255, 255);
+                    } else {
+                        baseColor = RGB(240, 240, 240);  // Light gray for inactive
+                        textColor = RGB(80, 80, 80);
+                    }
+                    btnText = "Erasure";
+                } else if (dis->hwndItem == GetDlgItem(g_hWnd, ID_TAB_DETAILS)) {
+                    // Check if this is the active tab
+                    if (g_activeTab == 1029) { // ID_TAB_DETAILS
+                        baseColor = RGB(0, 120, 212);  // Blue for active
+                        textColor = RGB(255, 255, 255);
+                    } else {
+                        baseColor = RGB(240, 240, 240);  // Light gray for inactive
+                        textColor = RGB(80, 80, 80);
+                    }
+                    btnText = "Erasure Details";
+                } else if (dis->hwndItem == GetDlgItem(g_hWnd, ID_TAB_REPORT)) {
+                    // Check if this is the active tab
+                    if (g_activeTab == 1030) { // ID_TAB_REPORT
+                        baseColor = RGB(0, 120, 212);  // Blue for active
+                        textColor = RGB(255, 255, 255);
+                    } else {
+                        baseColor = RGB(240, 240, 240);  // Light gray for inactive
+                        textColor = RGB(80, 80, 80);
+                    }
+                    btnText = "Report";
+                } else if (dis->hwndItem == GetDlgItem(g_hWnd, ID_ABOUT_DIALOG)) {
+                    baseColor = RGB(255, 255, 255);  // White background
+                    textColor = RGB(0, 120, 215);    // Blue text
+                    btnText = "i";
+                } else {
+                    baseColor = RGB(80, 80, 80);   // Dark gray for other buttons
+                    textColor = RGB(255, 255, 255);
+                    btnText = "Refresh";
                 }
                 
                 COLORREF bgColor = baseColor;
@@ -1441,7 +2413,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 HBRUSH hOldBrush = (HBRUSH)SelectObject(dis->hDC, hBrush);
                 HPEN hOldPen = (HPEN)SelectObject(dis->hDC, hPen);
                 
-                // Draw rounded rectangle (8px radius)
+                // Draw button shape
                 RECT btnRect = dis->rcItem;
                 if (dis->itemState & ODS_SELECTED) {
                     // Offset for pressed effect
@@ -1449,8 +2421,25 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     btnRect.left += 1;
                 }
                 
+                // Special drawing for different button types
+                if (dis->hwndItem == GetDlgItem(g_hWnd, ID_ABOUT_DIALOG)) {
+                    // Draw modern rounded square for About button (6px radius)
+                    RoundRect(dis->hDC, btnRect.left, btnRect.top, 
+                             btnRect.right, btnRect.bottom, 6, 6);
+                } else if (dis->hwndItem == GetDlgItem(g_hWnd, ID_TAB_ERASURE) ||
+                          dis->hwndItem == GetDlgItem(g_hWnd, ID_TAB_DETAILS) ||
+                          dis->hwndItem == GetDlgItem(g_hWnd, ID_TAB_REPORT)) {
+                    // Simple tab design - just rounded rectangles
+                    RECT tabRect = btnRect;
+                    
+                    // Draw simple rounded rectangle
+                    RoundRect(dis->hDC, tabRect.left, tabRect.top, 
+                             tabRect.right, tabRect.bottom, 4, 4);
+                } else {
+                    // Draw rounded rectangle for all other buttons (8px radius)
                 RoundRect(dis->hDC, btnRect.left, btnRect.top, 
                          btnRect.right, btnRect.bottom, 8, 8);
+                }
                 
                 SelectObject(dis->hDC, hOldBrush);
                 SelectObject(dis->hDC, hOldPen);
@@ -1489,6 +2478,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 // WinMain entry point
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     g_hInstance = hInstance;
+    
+    // Load RichEdit library
+    LoadLibraryA("riched20.dll");
     
     // Initialize common controls
     INITCOMMONCONTROLSEX icc{};
